@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.coverage
+.coverage.*
+.idea/
+cluster_sbatch.sh
+cluster_sbatch_mpi.sh
+cluster_torchy.sh
+.pytype/
+htmlcov/
+git_rewrite_commit_history.sh
+.vscode/

@@ -1,0 +1,470 @@
+import math
+import os
+from scipy import signal
+import subprocess
+import time
+from abc import ABC
+import pybullet as p
+import numpy as np
+import rospkg
+import rospy
+import transforms3d.axangles
+from controller import Keyboard
+from nav_msgs.msg import Odometry
+from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
+from wolfgang_pybullet_sim.simulation import Simulation
+
+from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
+
+try:
+    from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
+except:
+    rospy.logerr("Could not load webots sim. If you want to use it, source the setenvs.sh")
+
+
+class AbstractSim:
+
+    def __init__(self):
+        pass
+
+    def get_base_velocity(self, robot_index):
+        raise NotImplementedError
+
+    def get_base_position_and_orientation(self, robot_index):
+        raise NotImplementedError
+
+    def get_joint_values(self, used_joint_names, scaled=False, robot_index=1):
+        raise NotImplementedError
+
+    def get_link_values(self, link_name, robot_index):
+        raise NotImplementedError
+
+    def get_sensor_force(self, sensor_name, filtered, robot_index=1):
+        raise NotImplementedError
+
+    def set_joint_position(self, joint_name, position, scaled=False, relative=False, robot_index=1):
+        raise NotImplementedError
+
+    def set_alpha(self, alpha, robot_index=1):
+        raise NotImplementedError
+
+    def reset_joints_to_init_pos(self, robot_index=1):
+        raise NotImplementedError
+
+    def reset_base_position_and_orientation(self, pos, quat, robot_index=1):
+        raise NotImplementedError
+
+    def reset_base_velocity(self, lin_vel, ang_vel, robot_index=1):
+        raise NotImplementedError
+
+    def reset_joint_to_position(self, joint_name, pos_in_rad, velocity=0, robot_index=1):
+        raise NotImplementedError
+
+    def reset_pressure_filters(self, robot_index=1):
+        raise NotImplementedError
+
+    def apply_external_force_to_base(self, force, robot_index=1):
+        raise NotImplementedError
+
+    def apply_external_torque_to_base(self, torque, robot_index=1):
+        raise NotImplementedError
+
+    def convert_radiant_to_scaled(self, joint_name, radiant, robot_index=1):
+        raise NotImplementedError
+
+    def convert_scaled_to_radiant(self, joint_name, scaled, robot_index=1):
+        raise NotImplementedError
+
+    def randomize_links(self, mass_bounds, inertia_bounds, robot_index=1):
+        raise NotImplementedError
+
+    def randomize_joints(self, torque_bounds, vel_bounds, robot_index=1):
+        raise NotImplementedError
+
+    def randomize_foot_friction(self, restitution_bounds, lateral_friction_bounds, spinning_friction_bounds,
+                                rolling_friction_bounds, robot_index=1):
+        raise NotImplementedError
+
+    def randomize_floor(self, restitution_bounds, lateral_friction_bounds, spinning_friction_bounds,
+                        rolling_friction_bounds):
+        raise NotImplementedError
+
+    def randomize_terrain(self, terrain_height):
+        raise NotImplementedError
+
+    def read_command_vel_from_gui(self):
+        raise NotImplementedError
+
+    def step(self):
+        raise NotImplementedError
+
+    def step_pressure_filters(self, robot_index=1):
+        raise NotImplementedError
+
+    def handle_gui(self):
+        raise NotImplementedError
+
+    def get_alpha(self):
+        raise NotImplementedError
+
+    def is_fixed_position(self):
+        raise NotImplementedError
+
+    def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
+        raise NotImplementedError
+
+    def set_initial_joint_positions(self, joint_position_dict):
+        self.initial_joint_positions = joint_position_dict
+
+    def add_robot(self, physics_active=True):
+        raise NotImplementedError
+
+    def get_imu_ang_vel(self):
+        raise NotImplementedError
+
+    def get_imu_lin_acc(self):
+        raise NotImplementedError
+
+class PybulletSim(Simulation, AbstractSim):
+
+    def __init__(self, gui, terrain_height, robot="wolfgang"):
+        AbstractSim.__init__(self)
+        Simulation.__init__(self, gui, urdf_path=None, terrain_height=terrain_height, field=False, robot=robot,
+                            load_robot=False)
+
+        # load simuation params
+        rospack = rospkg.RosPack()
+        # print(self.namespace)
+        load_yaml_to_param("", 'wolfgang_pybullet_sim', '/config/config.yaml', rospack)
+        self.gui = gui
+        if self.gui:
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, True)
+            p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
+            p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
+            p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
+            self.debug_alpha_index = p.addUserDebugParameter("display reference", 0, 1, 0.5)
+            self.debug_refbot_fix_position = p.addUserDebugParameter("fixed refbot position", 0, 1, 0)
+            self.debug_random_vel = p.addUserDebugParameter("random vel", 0, 1, 0)
+            self.debug_cmd_vel = [p.addUserDebugParameter("cmd vel x", -1, 1, 0.1),
+                                  p.addUserDebugParameter("cmd vel y", -1, 1, 0.0),
+                                  p.addUserDebugParameter("cmd vel yaw", -2, 2, 0.0)]
+
+    def get_base_velocity(self, robot_index):
+        return p.getBaseVelocity(robot_index)
+
+    def get_base_position_and_orientation(self, robot_index):
+        (x, y, z), (qx, qy, qz, qw) = Simulation.get_base_position_and_orientation(self, robot_index)
+        pos_in_world = np.array([x, y, z])
+        quat_in_world = xyzw2wxyz([qx, qy, qz, qw])
+        return pos_in_world, quat_in_world
+
+    def get_link_values(self, link_name, robot_index):
+        pos_in_world, xyzw_in_world, lin_vel_in_world, ang_vel_in_world = Simulation.get_link_values(self, link_name,
+                                                                                                     robot_index)
+        return pos_in_world, xyzw2wxyz(xyzw_in_world), lin_vel_in_world, ang_vel_in_world
+
+    def reset_base_position_and_orientation(self, pos, quat, robot_index=1):
+        xyzw = wxyz2xyzw(quat)
+        Simulation.reset_base_position_and_orientation(self, pos, xyzw, robot_index)
+
+    def read_command_vel_from_gui(self):
+        if self.gui and p.readUserDebugParameter(self.debug_random_vel) < 0.5:
+            # manual setting parameters via gui for testing
+            return [p.readUserDebugParameter(self.debug_cmd_vel[0]), p.readUserDebugParameter(self.debug_cmd_vel[1]),
+                    p.readUserDebugParameter(self.debug_cmd_vel[2])]
+        else:
+            return None
+
+    def get_alpha(self):
+        return p.readUserDebugParameter(self.debug_alpha_index)
+
+    def is_fixed_position(self):
+        return p.readUserDebugParameter(self.debug_refbot_fix_position) >= 0.5
+
+    def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
+        view_matrix = p.computeViewMatrixFromYawPitchRoll(cameraTargetPosition=robot_pos,
+                                                          distance=camera_distance,
+                                                          yaw=camera_yaw,
+                                                          pitch=camera_pitch, roll=0,
+                                                          upAxisIndex=2)
+        proj_matrix = p.computeProjectionMatrixFOV(fov=60, aspect=float(render_width) / render_height, nearVal=0.1,
+                                                   farVal=100.0)
+        (_, _, px, _, _) = p.getCameraImage(width=render_width, height=render_height,
+                                            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+                                            viewMatrix=view_matrix, projectionMatrix=proj_matrix)
+        rgb_array = np.array(px)
+        rgb_array = rgb_array[:, :, :3]
+        return rgb_array
+
+
+class WebotsSim(SupervisorController, AbstractSim):
+
+    def __init__(self, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False):
+        AbstractSim.__init__(self)
+        self.robot_type = robot
+        self.alpha = 0.5
+        self.fixed_position = False
+        self.show_refbot = True
+        self.free_camera_active = False
+        self.command_vel = [0.1, 0, 0]
+        self.velocity_warning_printed = False
+
+        if start_webots:
+            # start webots
+            rospack = rospkg.RosPack()
+            path = rospack.get_path("wolfgang_webots_sim")
+
+            arguments = ["webots",
+                         "--batch",
+                         path + "/worlds/" + world + ".wbt"]
+            if not gui:
+                arguments.append("--minimize")
+                arguments.append("--no-rendering")
+                arguments.append("--stdout")
+                arguments.append("--stderr")
+            self.sim_proc = subprocess.Popen(arguments, stdout=subprocess.PIPE)
+
+            os.environ["WEBOTS_PID"] = str(self.sim_proc.pid)
+
+        if gui:
+            mode = 'normal'
+        else:
+            mode = 'fast'
+        os.environ["WEBOTS_ROBOT_NAME"] = "wolfgang"
+        SupervisorController.__init__(self, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
+
+        self.pressure_filters = {}
+        # compute frequency based on timestep which is represented in ms
+        self.simulator_freq = 1000 / self.world_info.getField("basicTimeStep").getSFFloat()
+
+        # this is currently only a solution for this case and could be made more generic
+        # webots does not allow to have more than one robot controller from a python process.
+        # Therefore we only create a controller for the actual robot and handle the refbot differently by directly
+        # accessing the nodes
+        self.robot_controller = RobotController(ros_active=False, robot=self.robot_type, do_ros_init=False,
+                                                robot_node=self.supervisor, base_ns='', recognize=False,
+                                                camera_active=False)
+
+        for sensor_name in self.robot_controller.pressure_sensor_names:
+            self.pressure_filters[sensor_name] = WebotsPressureFilter(self.simulator_freq)
+
+        self.refbot_node = self.robot_nodes["refbot"]
+
+    def add_robot(self, physics_active=True):
+        # robots are already added in __init__()
+        if not physics_active:
+            name = 'refbot'
+        else:
+            name = 'wolfgang'
+        return name
+
+    def get_base_velocity(self, robot_index):
+        if robot_index == "refbot":
+            # refbot needs to be handled differently since it can not have a robot controller
+            # currently not needed but catch this if this will be used later
+            raise NotImplementedError
+        lin_vel, ang_vel = self.get_robot_velocity(robot_index)
+        return [lin_vel, ang_vel]
+
+    def get_base_position_and_orientation(self, robot_index):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        pos, quat = self.get_robot_pose_quat(robot_index)
+        quat = xyzw2wxyz(quat)
+        return pos, quat
+
+    def get_joint_values(self, used_joint_names, scaled=False, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        return self.robot_controller.get_joint_values(used_joint_names, scaled)
+
+    def get_link_values(self, link_name, robot_index):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        pos, xyzw = self.get_link_pose(link_name, robot_index)
+        lin_vel, ang_vel = self.get_link_velocities(link_name, robot_index)
+        return pos, xyzw2wxyz(xyzw), lin_vel, ang_vel
+
+    def get_sensor_force(self, sensor_name, filtered, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        unfiltered, filtered = self.pressure_filters[sensor_name.lower()].get_force()
+        if filtered:
+            return filtered
+        else:
+            return unfiltered
+
+    def set_joint_position(self, joint_name, position, scaled=False, relative=False, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        self.robot_controller.set_joint_goal_position(joint_name, position)
+
+    def set_alpha(self, alpha, robot_index=1):
+        if robot_index != "refbot":
+            raise NotImplementedError
+        self.robot_nodes["refbot"].getField("transparency").setSFFloat(alpha)
+
+    def reset_joints_to_init_pos(self, robot_index=1):
+        # to a webots based reset first, there could be an issue with one of the joints
+        self.reset_robot_init(robot_index)
+        for name in self.robot_controller.initial_joint_positions.keys():
+            self.reset_joint_to_position(name, math.radians(self.robot_controller.initial_joint_positions[name]),
+                                         velocity=0, robot_index=robot_index)
+
+    def reset_base_position_and_orientation(self, pos, quat, robot_index=1):
+        quat = wxyz2xyzw(quat)
+        self.reset_robot_pose(pos, quat, robot_index)
+
+    def reset_base_velocity(self, lin_vel, ang_vel, robot_index=1):
+        self.robot_nodes[robot_index].setVelocity([*lin_vel, *ang_vel])
+
+    def reset_joint_to_position(self, joint_name, pos_in_rad, velocity=0, robot_index=1):
+        # we directly reset the joint position, not the PID controlled motor
+        # get the joint from the defined robot by using the weird webots syntax
+        # joint_name = self.robot_controller.external_motor_names_to_motor_names[joint_name]
+        self.joint_nodes[robot_index][joint_name].setJointPosition(pos_in_rad)
+        if velocity != 0 and not self.velocity_warning_printed:
+            print("Resetting a joint to a specific velocity is not possible in Webots. Will only set Position.")
+            self.velocity_warning_printed = True
+
+    def reset_pressure_filters(self, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        for filter in self.pressure_filters.values():
+            filter.reset()
+
+    def apply_external_force_to_base(self, force, robot_index=1):
+        self.robot_nodes[robot_index].addForce(force, False)
+
+    def apply_external_torque_to_base(self, torque, robot_index=1):
+        self.robot_nodes[robot_index].addTorque(torque, False)
+
+    def convert_radiant_to_scaled(self, joint_name, radiant, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        return self.robot_controller.convert_joint_radiant_to_scaled(joint_name, radiant)
+
+    def convert_scaled_to_radiant(self, joint_name, scaled, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        return self.robot_controller.convert_scaled_to_radiant(joint_name, scaled)
+
+    def randomize_links(self, mass_bounds, inertia_bounds, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        raise NotImplementedError  # todo
+
+    def randomize_joints(self, torque_bounds, vel_bounds, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        raise NotImplementedError  # todo
+
+    def randomize_foot_friction(self, restitution_bounds, lateral_friction_bounds, spinning_friction_bounds,
+                                rolling_friction_bounds, robot_index=1):
+        if robot_index == "refbot":
+            raise NotImplementedError
+        raise NotImplementedError  # todo
+
+    def randomize_floor(self, restitution_bounds, lateral_friction_bounds, spinning_friction_bounds,
+                        rolling_friction_bounds):
+        raise NotImplementedError  # todo
+
+    def randomize_terrain(self, terrain_height):
+        raise NotImplementedError  # todo
+
+    def read_command_vel_from_gui(self):
+        return self.command_vel
+
+    def step(self):
+        SupervisorController.step(self)
+
+    def step_pressure_filters(self, robot_index=1):
+        i = 0
+        for sensor_name in list(self.pressure_filters.keys()):
+            self.pressure_filters[sensor_name].filter_step(self.robot_controller.pressure_sensors[i])
+            i += 1
+
+    def get_alpha(self):
+        return self.alpha
+
+    def is_fixed_position(self):
+        return self.fixed_position
+
+    def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
+        # todo get reference for self.camera
+        if not self.free_camera_active:
+            self.camera.enable(30)
+            self.free_camera_active = True
+        name = "free_camera"
+        camera_node = self.robot_nodes[name]
+        robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
+        camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
+                                                                                                  camera_yaw)
+        self.translation_fields[name].setSFVec3f(list(camera_pos))
+        axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
+        self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
+
+        camera_node.getField("cameraWidth").setSFFloat(render_width)
+        camera_node.getField("cameraHeight").setSFFloat(render_height)
+
+        return self.camera.getImage()
+
+    def handle_gui(self):
+        key = SupervisorController.handle_gui(self)
+        if key == ord('T'):
+            self.alpha -= 0.05
+            self.alpha = max(0, self.alpha)
+        elif key == Keyboard.SHIFT + ord('T'):
+            self.alpha += 0.05
+            self.alpha = min(1, self.alpha)
+        elif key == ord('F'):
+            self.fixed_position = not self.fixed_position
+        elif key == ord('B'):
+            if self.show_refbot:
+                self.set_alpha(1, "refbot")
+            else:
+                self.set_alpha(0, "refbot")
+            self.show_refbot = not self.show_refbot
+        elif key == ord('W'):
+            self.command_vel[0] += 0.1
+        elif key == ord('S'):
+            self.command_vel[0] -= 0.1
+        elif key == ord('A'):
+            self.command_vel[1] += 0.1
+        elif key == ord('D'):
+            self.command_vel[1] -= 0.1
+        elif key == ord('Q'):
+            self.command_vel[2] += 0.1
+        elif key == ord('E'):
+            self.command_vel[2] -= 0.1
+
+        if key in [ord('W'), ord('A'), ord('S'), ord('D'), ord('Q'), ord('E')]:
+            print(
+                f"Command vel: x:{round(self.command_vel[0], 2)} y:{round(self.command_vel[1], 2)} yaw:{round(self.command_vel[2], 2)}")
+
+    def get_imu_ang_vel(self):
+        return self.robot_controller.gyro.getValues()
+
+    def get_imu_lin_acc(self):
+        return self.robot_controller.accel.getValues()
+
+
+class WebotsPressureFilter:
+    def __init__(self, simulation_freq, cutoff=10, order=5):
+        nyq = simulation_freq * 0.5  # nyquist frequency from simulation frequency
+        normalized_cutoff = cutoff / nyq  # cutoff freq in hz
+        self.filter_b, self.filter_a = signal.butter(order, normalized_cutoff, btype='low')
+        self.filter_state = None
+        self.reset()
+        self.unfiltered = 0
+        self.filtered = [0]
+
+    def reset(self):
+        self.filter_state = signal.lfilter_zi(self.filter_b, self.filter_a)
+
+    def filter_step(self, unfiltered):
+        self.filtered, self.filter_state = signal.lfilter(self.filter_b, self.filter_a, [self.unfiltered],
+                                                          zi=self.filter_state)
+
+    def get_force(self):
+        return max(self.unfiltered, 0), max(self.filtered[0], 0)

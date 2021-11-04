@@ -13,5 +13,6 @@ setup(name='deep_quintic',
       author_email='marc.bestmann@uni-hamburg.de',
       license='',
       zip_safe=False,
-      install_requires=[])
+      install_requires=['pyquaternion', 'sb3_contrib'],
+      packages=['deep_quintic'])
 

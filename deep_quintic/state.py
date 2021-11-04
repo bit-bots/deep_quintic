@@ -97,7 +97,7 @@ class BaseState(PhaseState):
             print("ROTATION NOT KNOWN")
             exit()
 
-        ang_vel = deepcopy(self.env.robot.ang_vel)
+        ang_vel = deepcopy(self.env.robot.imu_ang_vel)
         if self.randomize:
             for i in range(3):
                 ang_vel[i] = random.gauss(ang_vel[i], 0.2)
@@ -106,16 +106,12 @@ class BaseState(PhaseState):
         output["ang_vel"] = ang_vel
 
         if self.use_foot_sensors != "":
-            if len(self.env.robot.pressure_sensors) == 0:
-                # this can happen when creating the env for ros_runner
-                output["foot_pressure"] = [0] * 8
-            else:
-                foot_pressures = self.get_pressure_array(self.use_foot_sensors)
+            foot_pressures = self.get_pressure_array(self.use_foot_sensors)
 
-                if self.use_foot_sensors == "binary":
-                    output["foot_pressure"] = foot_pressures
-                else:
-                    output["foot_pressure"] = foot_pressures / np.array(100) if scaled else foot_pressures
+            if self.use_foot_sensors == "binary":
+                output["foot_pressure"] = foot_pressures
+            else:
+                output["foot_pressure"] = foot_pressures / np.array(100) if scaled else foot_pressures
 
         if self.env.use_rt_in_state:
             if self.env.relative:
@@ -132,20 +128,20 @@ class BaseState(PhaseState):
                 else:
                     print("not implemented")
                     exit()
-        if self.env.vel_in_state:
-            output["vel"] = [self.env.robot.walk_vel[0], self.env.robot.walk_vel[1], self.env.robot.walk_vel[2]]
 
         return output
 
     def get_pressure_array(self, type):
-        return [self.env.robot.pressure_sensors["LLB"].get_value(type),
-                self.env.robot.pressure_sensors["LLF"].get_value(type),
-                self.env.robot.pressure_sensors["LRF"].get_value(type),
-                self.env.robot.pressure_sensors["LRB"].get_value(type),
-                self.env.robot.pressure_sensors["RLB"].get_value(type),
-                self.env.robot.pressure_sensors["RLF"].get_value(type),
-                self.env.robot.pressure_sensors["RRF"].get_value(type),
-                self.env.robot.pressure_sensors["RRB"].get_value(type)]
+        robot_index = self.env.robot.robot_index
+        filtered = type == "filtered"
+        return [self.env.sim.get_sensor_force("LLB", filtered, robot_index),
+                self.env.sim.get_sensor_force("LLF", filtered, robot_index),
+                self.env.sim.get_sensor_force("LRF", filtered, robot_index),
+                self.env.sim.get_sensor_force("LRB", filtered, robot_index),
+                self.env.sim.get_sensor_force("RLB", filtered, robot_index),
+                self.env.sim.get_sensor_force("RLF", filtered, robot_index),
+                self.env.sim.get_sensor_force("RRF", filtered, robot_index),
+                self.env.sim.get_sensor_force("RRB", filtered, robot_index)]
 
 
 class CartesianState(BaseState):
@@ -204,16 +200,8 @@ class JointSpaceState(BaseState):
 
     def get_state_entries(self, scaled):
         output = super(JointSpaceState, self).get_state_entries(scaled)
-        joint_positions = []
-        joint_velocities = []
-        for joint_name in self.env.robot.used_joint_names:
-            joint = self.env.robot.joints[joint_name]
-            if scaled:
-                joint_positions.append(joint.get_scaled_position())
-                joint_velocities.append(joint.get_scaled_velocity())
-            else:
-                joint_positions.append(joint.get_position())
-                joint_velocities.append(joint.get_velocity())
+        joint_positions, joint_velocities, joint_torrques = self.env.sim.get_joint_values(
+            self.env.robot.used_joint_names, scaled, self.env.robot.robot_index)
         output["joint_positions"] = joint_positions
         if self.leg_vel_in_state:
             output["joint_velocities"] = joint_velocities

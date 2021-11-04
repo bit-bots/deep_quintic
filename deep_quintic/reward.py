@@ -2,15 +2,13 @@ from abc import ABC
 import math
 import numpy as np
 import rospy
-import transforms3d.quaternions
+from moveit_msgs.srv import GetPositionFKRequest
 from pyquaternion import Quaternion
 from std_msgs.msg import Float32
-import pybullet as p
-from transforms3d.affines import compose
 from transforms3d.euler import quat2euler
-from transforms3d.quaternions import quat2mat, qinverse
 
-from deep_quintic.utils import substract_tuples, compute_imu_orientation_from_world, Rot
+from bitbots_moveit_bindings import get_position_fk
+from deep_quintic.utils import compute_imu_orientation_from_world, Rot
 
 from typing import TYPE_CHECKING
 
@@ -186,8 +184,9 @@ class CartesianActionVelReward(WeightedCombinedReward):
     def __init__(self, env: "DeepQuinticEnv"):
         super().__init__(env)
         self.reward_classes = [FootActionReward(env),
-                               CommandVelReward(env)]
-        self.weights = [0.5, 0.5]
+                               CommandVelReward(env),
+                               IKErrorReward(env)]
+        self.weights = [0.5, 0.5, 0]
 
 
 class CartesianDoubleActionVelReward(WeightedCombinedReward):
@@ -333,6 +332,37 @@ class ActionNotPossibleReward(AbstractReward):
             return 0
         else:
             return -1
+
+
+class IKErrorReward(AbstractReward):
+    def __init__(self, env: "DeepQuinticEnv", factor=1):
+        super().__init__(env)
+        self.factor = factor
+
+    def compute_reward(self):
+        # gives reward based on the size of the IK error for the current action.
+        # this can be helpful to avoid wrong actions and as debug
+        request = GetPositionFKRequest()
+        for i in range(len(self.env.robot.leg_joints)):
+            request.robot_state.joint_state.name.append(self.env.robot.leg_joints[i])
+            request.robot_state.joint_state.position.append(self.env.robot.last_ik_result[i])
+        request.fk_link_names = ['l_sole', 'r_sole']
+        result = get_position_fk(request)  # type: GetPositionFKResponse
+        l_sole = result.pose_stamped[result.fk_link_names.index('l_sole')].pose
+        fk_left_foot_pos = np.array([l_sole.position.x, l_sole.position.y, l_sole.position.z])
+        l_sole_quat = l_sole.orientation
+        fk_left_foot_rpy = quat2euler([l_sole_quat.w, l_sole_quat.x, l_sole_quat.y, l_sole_quat.z])
+        r_sole = result.pose_stamped[result.fk_link_names.index('r_sole')].pose
+        fk_right_foot_pos = np.array([r_sole.position.x, r_sole.position.y, r_sole.position.z])
+        r_sole_quat = r_sole.orientation
+        fk_right_foot_rpy = quat2euler([r_sole_quat.w, r_sole_quat.x, r_sole_quat.y, r_sole_quat.z])
+
+        # compare to the given goals for the IK
+        fk_action = self.env.robot.scale_pose_to_action(fk_left_foot_pos, fk_left_foot_rpy, fk_right_foot_pos,
+                                                        fk_right_foot_rpy, self.env.rot_type)
+
+        action_diff = np.linalg.norm(np.array(self.env.last_action) - fk_action)
+        return math.exp(-self.factor * (action_diff ** 2))
 
 
 class CommandVelReward(AbstractReward):
@@ -547,10 +577,10 @@ class JointPositionActionReward(AbstractReward):
             print("env check")
             return 0
         else:
-            scaled_ref_positions = self.env.robot.scale_joint_positions(self.env.refbot.previous_joint_positions)
+            scaled_ref_positions = self.env.robot.joints_radiant_to_scaled(self.env.refbot.previous_joint_positions)
             if self.env.relative:
                 # if we do relative actions, we need to add the action to the positions of the joints at that time
-                action = self.env.robot.scale_joint_positions(
+                action = self.env.robot.joints_radiant_to_scaled(
                     self.env.robot.joint_positions + self.env.relative_scaling_joint_action * self.env.last_action)
             else:
                 action = self.env.last_action
@@ -668,7 +698,7 @@ class UprightReward(AbstractReward):
 
     def compute_reward(self):
         # only take roll and pitch
-        robot_imu_rpy = self.env.robot.imu_rpy[:2]
+        robot_imu_rpy = quat2euler(self.env.robot.quat_in_world)[:2]
         if self.reference:
             reference_rpy = np.array(compute_imu_orientation_from_world(self.env.refbot.quat_in_world)[0][:2])
         else:

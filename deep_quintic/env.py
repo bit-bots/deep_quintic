@@ -1,40 +1,33 @@
+import rospy
+import numpy as np
 from bitbots_msgs.msg import FootPressure
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist
 from numpy import random
-import time
 import gym
-import pybullet_data
 import rospkg
-from rosgraph_msgs.msg import Clock
+from sensor_msgs.msg import Imu
 
-from sensor_msgs.msg import JointState, Imu
-from std_msgs.msg import Float32MultiArray
 from transforms3d.euler import quat2euler
 
-from deep_quintic.butter_filter import ButterFilter
-from deep_quintic.ros_interface import ROSInterface
-from deep_quintic.robot import Robot
+from deep_quintic.engine import WalkEngine
+from stable_baselines3.common.env_checker import check_env
 
+from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
+from bitbots_quintic_walk import PyWalk
+
+from deep_quintic.butter_filter import ButterFilter
+from deep_quintic.ros_debug_interface import ROSDebugInterface
+from deep_quintic.robot import Robot
 from deep_quintic.reward import DeepMimicReward, DeepMimicActionReward, CartesianReward, CartesianRelativeReward, \
     CassieReward, DeepMimicActionCartesianReward, CassieActionReward, CassieCartesianReward, \
     CassieCartesianActionReward, CartesianActionReward, EmptyTest, CartesianActionVelReward, CartesianActionOnlyReward, \
     CassieCartesianActionVelReward, JointActionVelReward, SmoothCartesianActionVelReward, \
     CartesianStableActionVelReward, CartesianDoubleActionVelReward, CartesianActionMovementReward, DeepQuinticReward, \
     CartesianStateVelReward, JointStateVelReward
-import pybullet as p
-import numpy as np
-import rospy
-
+from deep_quintic.simulation import WebotsSim, PybulletSim
 from deep_quintic.state import CartesianState, JointSpaceState, PhaseState, BaseState
-from deep_quintic.terrain import Terrain
 from deep_quintic.trajectory import Trajectory
-from stable_baselines3.common.env_checker import check_env
-
-from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
-
-from deep_quintic.utils import BulletClient, Rot
-
-from bitbots_quintic_walk import PyWalk
+from deep_quintic.utils import Rot
 
 
 class DeepQuinticEnv(gym.Env):
@@ -46,13 +39,12 @@ class DeepQuinticEnv(gym.Env):
         'video.frames_per_second': 30
     }
 
-    def __init__(self, pybullet_active=True, reward_function=CartesianActionReward, used_joints="Legs", step_freq=30,
-                 ros_debug=False,
-                 gui=False, trajectory_file=None, early_termination=True, ep_length_in_s=100, gravity=True,
-                 use_engine=True, cartesian_state=False, cartesian_action=False, relative=False,
-                 use_state_buffer=False, only_phase_state=False, only_base_state=False, use_foot_sensors=True,
-                 cyclic_phase=False, rot_type=Rot.RPY, use_rt_in_state=False, filter_actions=False, vel_in_state=False,
-                 terrain_height=0, phase_in_state=True, randomize=False, leg_vel_in_state=True) -> None:
+    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionReward", used_joints="Legs",
+                 step_freq=30, ros_debug=False, gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
+                 cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
+                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
+                 phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
+                 randomize=False, use_complementary_filter=True, random_head_movement=True) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -62,32 +54,29 @@ class DeepQuinticEnv(gym.Env):
         @param trajectory_file: file containing reference trajectory. without the environment will not use it
         @param early_termination: if episode should be terminated early when robot falls
         """
-        self.pybullet_active = pybullet_active
         self.gui = gui
-        self.paused = False
-        self.realtime = False
-        self.time_multiplier = 0
-        self.gravity = gravity
         self.ros_debug = ros_debug
-        self.early_termination = early_termination
         self.cartesian_state = cartesian_state
         self.cartesian_action = cartesian_action
         self.relative = relative
         self.use_state_buffer = use_state_buffer
-        self.only_phase_state = only_phase_state
-        self.only_base_state = only_base_state
-        self.use_foot_sensors = use_foot_sensors
+        self.state_type = state_type
         self.cyclic_phase = cyclic_phase
-        self.rot_type = rot_type
         self.use_rt_in_state = use_rt_in_state
+        self.foot_sensors_type = foot_sensors_type
         self.filter_actions = filter_actions
-        self.vel_in_state = vel_in_state
         self.terrain_height = terrain_height
         self.phase_in_state = phase_in_state
         self.step_freq = step_freq
         self.randomize = randomize
+        self.use_complementary_filter = use_complementary_filter
+        self.random_head_movement = random_head_movement
         self.leg_vel_in_state = leg_vel_in_state
-        self.reward_function = reward_function(self)
+        self.reward_function = eval(reward_function)(self)
+        self.rot_type = {'rpy': Rot.RPY,
+                         'fused': Rot.FUSED,
+                         'sixd': Rot.SIXD,
+                         'quat': Rot.QUAT}[rot_type]
 
         self.cmd_vel_current_bounds = [(-0.35, 0.35), (-0.2, 0.2), (-1, 1)]
         self.cmd_vel_max_bounds = [(-0.35, 0.35), (-0.2, 0.2), (-1, 1), 0.35]
@@ -105,7 +94,6 @@ class DeepQuinticEnv(gym.Env):
             "restitution": [0.0, 0.95],  # Bounciness of contacts (dimensionless)
             "max_force": 10,  # N
             "max_torque": 20  # Nm
-
         }
 
         self.last_action = None
@@ -133,54 +121,25 @@ class DeepQuinticEnv(gym.Env):
         self.max_episode_steps = ep_length_in_s * step_freq
         WolfgangBulletEnv.metadata['video.frames_per_second'] = step_freq
 
-        # Instantiating Bullet
-        self.pybullet_client = None
-        if self.pybullet_active:
-            if self.gui:
-                self.pybullet_client = BulletClient(p.GUI)
-                self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_GUI, True)
-                self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_SEGMENTATION_MARK_PREVIEW,
-                                                              0)
-                self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
-                self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
-                self.debug_alpha_index = self.pybullet_client.addUserDebugParameter("display reference", 0, 1, 0.5)
-                self.debug_refbot_fix_position = self.pybullet_client.addUserDebugParameter("fixed refbot position", 0,
-                                                                                            1, 0)
-                self.debug_random_vel = self.pybullet_client.addUserDebugParameter("random vel", 0, 1, 0)
-                self.debug_cmd_vel = [self.pybullet_client.addUserDebugParameter("cmd vel x", -1, 1, 0.1),
-                                      self.pybullet_client.addUserDebugParameter("cmd vel y", -1, 1, 0.0),
-                                      self.pybullet_client.addUserDebugParameter("cmd vel yaw", -2, 2, 0.0)]
-            else:
-                self.pybullet_client = BulletClient(p.DIRECT)
-
-            if self.gravity:
-                if self.terrain_height > 0:
-                    self.terrain = Terrain(self.terrain_height, clear_center=False)
-                    self.terrain_index = self.terrain.id
-                    self.pybullet_client.changeDynamics(self.terrain_index, -1, lateralFriction=1,
-                                                        spinningFriction=0.1, rollingFriction=0.1, restitution=0.9)
-                else:
-                    # Loading floor
-                    self.pybullet_client.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
-                    self.plane_index = self.pybullet_client.loadURDF('plane.urdf')
-                    self.pybullet_client.changeDynamics(self.plane_index, -1, lateralFriction=1, spinningFriction=0.1,
-                                                        rollingFriction=0.1, restitution=0.9)
-                self.pybullet_client.setGravity(0, 0, -9.81)
-            else:
-                self.pybullet_client.setGravity(0, 0, 0)
-            # no real time, as we will publish own clock
-            self.pybullet_client.setRealTimeSimulation(0)
+        # Instantiating Simulation
+        if simulator_type == "webots":
+            self.sim = WebotsSim(self.gui, start_webots=True)
+        elif simulator_type == "webots_extern":
+            self.sim = WebotsSim(self.gui)
+        else:
+            self.sim = PybulletSim(self.gui, self.terrain_height)
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
             isinstance(self.reward_function, CartesianStateVelReward)) or (
-                                self.cartesian_state and not self.only_base_state)) and not self.pybullet_client is None
-        self.robot = Robot(pybullet_client=self.pybullet_client, compute_joints=True,
-                           compute_feet=compute_feet, used_joints=used_joints, physics=True,
-                           compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward))
+                                self.cartesian_state and not self.state_type == "base"))
+        self.robot = Robot(simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
+                           used_joints=used_joints, physics=True,
+                           compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
+                           use_complementary_filter=use_complementary_filter)
         if self.gui:
-            # the reference bot only needs to be connectcompute_joined to pybullet if we want to display it
-            self.refbot = Robot(pybullet_client=self.pybullet_client, used_joints=used_joints)
+            # the reference bot only needs to be connect to pybullet if we want to display it
+            self.refbot = Robot(simulation=self.sim, used_joints=used_joints)
             self.refbot.set_alpha(0.5)
         else:
             self.refbot = Robot(used_joints=used_joints)
@@ -203,7 +162,7 @@ class DeepQuinticEnv(gym.Env):
                 exit(1)
             # load walking params
             load_yaml_to_param(self.namespace, "bitbots_quintic_walk", "/config/deep_quintic.yaml", rospack)
-            self.engine = PyWalk(self.namespace)
+            self.engine = WalkEngine(self.namespace)
         else:
             print("Warning: Neither trajectory nor engine provided")
 
@@ -218,15 +177,18 @@ class DeepQuinticEnv(gym.Env):
         else:
             # actions are bound between their joint position limits and represented between -1 and 1
             self.num_actions = self.robot.num_used_joints
-        if self.only_phase_state:
+        if self.state_type == "phase":
             self.state = PhaseState(self)
-        elif self.only_base_state:
-            self.state = BaseState(self, self.use_foot_sensors, self.randomize)
-        else:
+        elif self.state_type == "base":
+            self.state = BaseState(self, self.foot_sensors_type, self.randomize)
+        elif self.state_type == "full":
             if self.cartesian_state:
-                self.state = CartesianState(self, self.use_foot_sensors, self.leg_vel_in_state, self.randomize)
+                self.state = CartesianState(self, self.foot_sensors_type, self.leg_vel_in_state, self.randomize)
             else:
-                self.state = JointSpaceState(self, self.use_foot_sensors, self.leg_vel_in_state, self.randomize)
+                self.state = JointSpaceState(self, self.foot_sensors_type, self.leg_vel_in_state, self.randomize)
+        else:
+            print("state type not known")
+            exit()
         self.state_buffer = []
         self.action_buffer = []
         if self.use_state_buffer:
@@ -252,17 +214,7 @@ class DeepQuinticEnv(gym.Env):
 
         # add publisher if ROS debug is active
         if self.ros_debug:
-            self.action_publisher = rospy.Publisher("action_debug", Float32MultiArray, queue_size=1)
-            self.action_publisher_not_normalized = rospy.Publisher("action_debug_not_normalized", Float32MultiArray,
-                                                                   queue_size=1)
-            self.state_publisher = rospy.Publisher("state", Float32MultiArray, queue_size=1)
-            self.refbot_joint_publisher = rospy.Publisher("ref_joint_states", JointState, queue_size=1)
-            self.refbot_left_foot_publisher = rospy.Publisher("ref_left_foot", PoseStamped, queue_size=1)
-            self.refbot_right_foot_publisher = rospy.Publisher("ref_right_foot", PoseStamped, queue_size=1)
-            self.refbot_pose_publisher = rospy.Publisher("ref_pose", PoseStamped, queue_size=1)
-            self.lin_vel_publisher = rospy.Publisher("lin_vel", Float32MultiArray, queue_size=1)
-            self.ang_vel_publisher = rospy.Publisher("ang_vel", Float32MultiArray, queue_size=1)
-            self.ros_interface = ROSInterface(self.robot, init_node=True)
+            self.ros_interface = ROSDebugInterface(self, init_node=True)
 
         # run check after everything is initialized
         if False and self.ros_debug:
@@ -284,44 +236,32 @@ class DeepQuinticEnv(gym.Env):
         # todo
         # latency -> needs a lot of changes
         # joint friction -> would need to reload URDF
-        # joint damping -> would need to reload URDF. aber changeDynamics hat das aus?
+        # joint damping -> would need to reload URDF. or changeDynamics()?
         # contact stiffness
         # contact damping
 
-        self.robot.randomize_links(self.domain_rand_bounds["mass"], self.domain_rand_bounds["inertia"])
-        self.robot.randomize_joints(self.domain_rand_bounds["motor_torque"], self.domain_rand_bounds["motor_vel"])
-        self.robot.randomize_foot_friction(self.domain_rand_bounds["restitution"],
-                                           self.domain_rand_bounds["lateral_friction"],
-                                           self.domain_rand_bounds["spinning_friction"],
-                                           self.domain_rand_bounds["rolling_friction"])
+        self.sim.randomize_links(self.domain_rand_bounds["mass"], self.domain_rand_bounds["inertia"],
+                                 self.robot.robot_index)
+        self.sim.randomize_joints(self.domain_rand_bounds["motor_torque"], self.domain_rand_bounds["motor_vel"],
+                                  self.robot.robot_index)
+        self.sim.randomize_foot_friction(self.domain_rand_bounds["restitution"],
+                                         self.domain_rand_bounds["lateral_friction"],
+                                         self.domain_rand_bounds["spinning_friction"],
+                                         self.domain_rand_bounds["rolling_friction"], self.robot.robot_index)
 
-        # set dynamic values for the ground
-        rand_restitution = random.uniform(self.domain_rand_bounds["restitution"][0],
-                                          self.domain_rand_bounds["restitution"][1])
-        rand_lateral_friction = random.uniform(self.domain_rand_bounds["lateral_friction"][0],
-                                               self.domain_rand_bounds["lateral_friction"][1])
-        rand_spinning_friction = random.uniform(self.domain_rand_bounds["spinning_friction"][0],
-                                                self.domain_rand_bounds["spinning_friction"][1])
-        rand_rolling_friction = random.uniform(self.domain_rand_bounds["rolling_friction"][0],
-                                               self.domain_rand_bounds["rolling_friction"][1])
-        if self.terrain_height > 0:
-            p.changeDynamics(self.terrain_index, -1,
-                             lateralFriction=rand_lateral_friction,
-                             spinningFriction=rand_spinning_friction,
-                             rollingFriction=rand_rolling_friction,
-                             restitution=rand_restitution)
-        else:
-            p.changeDynamics(self.plane_index, -1,
-                             lateralFriction=rand_lateral_friction,
-                             spinningFriction=rand_spinning_friction,
-                             rollingFriction=rand_rolling_friction,
-                             restitution=rand_restitution)
+        self.sim.randomize_floor(self.domain_rand_bounds["restitution"],
+                                 self.domain_rand_bounds["lateral_friction"],
+                                 self.domain_rand_bounds["spinning_friction"],
+                                 self.domain_rand_bounds["rolling_friction"])
 
     def reset(self):
+        if self.gui:
+            # reset refbot
+            self.sim.reset_joints_to_init_pos(self.refbot.robot_index)
         if self.randomize:
             self.randomize_domain()
         if self.terrain_height > 0:
-            self.terrain.randomize(self.terrain_height)
+            self.sim.randomize_terrain(self.terrain_height)
 
         # if we have a reference trajectory we set the simulation to a random start in it
         if self.trajectory:
@@ -329,8 +269,8 @@ class DeepQuinticEnv(gym.Env):
             self.trajectory.reset()
             self.current_command_speed = self.trajectory.get_current_command_speed()
             # set robot body accordingly
-            self.robot.reset_to_reference(self.refbot)
-        elif self.engine:
+            self.robot.reset_to_reference(self.refbot, self.randomize)
+        elif self.engine is not None:
             # choose random initial state of the engine
             self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
                                           random.uniform(*self.cmd_vel_current_bounds[1]),
@@ -343,11 +283,10 @@ class DeepQuinticEnv(gym.Env):
                 self.current_command_speed[direction] = sign * (abs(self.cmd_vel_max_bounds[3]) - abs(
                     self.current_command_speed[(direction + 1) % 2]))
 
-            if self.gui and self.pybullet_client.readUserDebugParameter(self.debug_random_vel) < 0.5:
-                # manual setting parameters via gui for testing
-                self.current_command_speed[0] = self.pybullet_client.readUserDebugParameter(self.debug_cmd_vel[0])
-                self.current_command_speed[1] = self.pybullet_client.readUserDebugParameter(self.debug_cmd_vel[1])
-                self.current_command_speed[2] = self.pybullet_client.readUserDebugParameter(self.debug_cmd_vel[2])
+            # set command vel based on GUI input if appropriate
+            gui_cmd_vel = self.sim.read_command_vel_from_gui()
+            if gui_cmd_vel is not None:
+                self.current_command_speed = gui_cmd_vel
             engine_state = "WALKING"  # IDLE, WALKING, START_STEP, STOP_STEP, START_MOVEMENT, STOP_MOVEMENT, PAUSED, KICK
             phase = random.uniform()
             # reset the engine to specific start values
@@ -367,7 +306,7 @@ class DeepQuinticEnv(gym.Env):
             # next
             self.refbot_compute_next_step(reset=True)
             # set robot to initial pose
-            self.robot.reset_to_reference(self.refbot, self.randomize)
+            self.robot.reset_to_reference(self.refbot, self.randomize, self.terrain_height +0.02)
         else:
             # without trajectory we just go to init
             self.robot.reset()
@@ -404,10 +343,12 @@ class DeepQuinticEnv(gym.Env):
 
     def step_simulation(self):
         self.time += self.sim_timestep
-        self.pybullet_client.stepSimulation()
-        if self.use_foot_sensors == "filtered":
-            for name, ps in self.robot.pressure_sensors.items():
-                ps.filter_step()
+        self.sim.step()
+        # filters need to be done each step to have a high frequency
+        if self.foot_sensors_type == "filtered":
+            self.robot.step_pressure_filters()
+        if self.use_complementary_filter:
+            self.robot.update_complementary_filter(self.sim_timestep)
 
     def step_trajectory(self):
         # step the trajectory further, based on the time
@@ -429,8 +370,8 @@ class DeepQuinticEnv(gym.Env):
                 right_pressure = FootPressure()
             else:
                 imu_msg = self.robot.get_imu_msg()
-                left_pressure = self.robot.get_pressure_filtered_left()
-                right_pressure = self.robot.get_pressure_filtered_right()
+                left_pressure = self.robot.get_pressure(left=True, filtered=True, time=False)
+                right_pressure = self.robot.get_pressure(left=False, filtered=True, time=False)
             result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
                                       self.robot.get_joint_state_msg(), left_pressure, right_pressure)
         phase = self.engine.get_phase()
@@ -473,56 +414,15 @@ class DeepQuinticEnv(gym.Env):
                                       joint_positions=joint_positions)
 
     def handle_gui(self):
-        # get keyboard events if gui is active
         if self.gui:
-            # check if simulation should continue currently
-            while True:
-                # rest if R-key was pressed
-                rKey = ord('r')
-                nKey = ord('n')
-                sKey = ord('s')
-                tKey = ord('t')
-                zKey = ord('z')
-                spaceKey = self.pybullet_client.B3G_SPACE
-                keys = self.pybullet_client.getKeyboardEvents()
-                if rKey in keys and keys[rKey] & self.pybullet_client.KEY_WAS_TRIGGERED:
-                    self.reset()
-                if spaceKey in keys and keys[spaceKey] & self.pybullet_client.KEY_WAS_TRIGGERED:
-                    self.paused = not self.paused
-                if sKey in keys and keys[sKey] & self.pybullet_client.KEY_IS_DOWN:
-                    time.sleep(0.1)
-                    break
-                if nKey in keys and keys[nKey] & self.pybullet_client.KEY_WAS_TRIGGERED:
-                    if self.gravity:
-                        self.pybullet_client.setGravity(0, 0, 0)
-                    else:
-                        self.pybullet_client.setGravity(0, 0, -9.81)
-                    self.gravity = not self.gravity
-                if tKey in keys and keys[tKey] & self.pybullet_client.KEY_WAS_TRIGGERED:
-                    self.realtime = not self.realtime
-                    print("Realtime is " + str(self.realtime))
-                if zKey in keys and keys[zKey] & self.pybullet_client.KEY_WAS_TRIGGERED:
-                    self.time_multiplier = (self.time_multiplier + 1) % 3
-                    print(self.time_multiplier)
-
-                if not self.paused:
-                    break
-
             # render ref trajectory
             self.refbot.update_ref_in_sim()
-            self.refbot.set_alpha(self.pybullet_client.readUserDebugParameter(self.debug_alpha_index))
-            if self.pybullet_client.readUserDebugParameter(self.debug_refbot_fix_position) >= 0.5:
+            self.refbot.set_alpha(self.sim.get_alpha())
+            if self.sim.is_fixed_position():
                 self.refbot.reset_base_to_pose(self.robot.pos_in_world, self.robot.quat_in_world)
-            if self.realtime:
-                # sleep long enough to run the simulation in real time and not in accelerated speed
-                step_computation_time = time.time() - self.last_step_time
-                self.last_step_time = time.time()
-                time_to_sleep = self.env_timestep - step_computation_time
-                if time_to_sleep > 0:
-                    time.sleep(time_to_sleep * (self.time_multiplier + 1))
+            self.sim.handle_gui()
 
     def step(self, action):
-
         if False:
             # test reference as action
             if self.cartesian_action:
@@ -561,6 +461,8 @@ class DeepQuinticEnv(gym.Env):
         if self.randomize:
             # apply some random force
             self.robot.apply_random_force(self.domain_rand_bounds["max_force"], self.domain_rand_bounds["max_torque"])
+        if self.random_head_movement:
+            self.robot.set_random_head_goals()
 
         for i in range(self.sim_steps):
             self.step_simulation()
@@ -568,7 +470,7 @@ class DeepQuinticEnv(gym.Env):
         self.robot.update()
         if self.trajectory:
             self.step_trajectory()
-        if self.engine:
+        if self.engine is not None:
             # step the refbot and compute the next goals
             self.refbot.step()
             self.refbot_compute_next_step()
@@ -579,7 +481,7 @@ class DeepQuinticEnv(gym.Env):
         else:
             reward = 0
 
-        dead = self.early_termination and (not self.action_possible or not self.robot.is_alive())
+        dead = not self.action_possible or not self.robot.is_alive()
         done = dead or self.step_count >= self.max_episode_steps - 1
         info = dict()
         if done:
@@ -588,7 +490,7 @@ class DeepQuinticEnv(gym.Env):
             info["is_success"] = not dead
 
         if self.ros_debug:
-            self.publish(action)
+            self.ros_interface.publish()
         self.handle_gui()
 
         # create state, including previous states and actions
@@ -598,10 +500,6 @@ class DeepQuinticEnv(gym.Env):
         if self.action_buffer_size > 0:
             self.action_buffer.pop(0)
             self.action_buffer.append(self.last_action)
-
-        clock_msg = Clock()
-        clock_msg.clock = rospy.Time.from_sec(self.time)
-        self.ros_interface.clock_publisher.publish(clock_msg)
 
         obs = self.create_state_from_buffer()
         # if not np.isfinite(obs).all():
@@ -626,71 +524,13 @@ class DeepQuinticEnv(gym.Env):
         self.robot.np_random = self.np_random  # use the same np_randomizer for robot as for env
         return [seed]
 
-    def publish(self, action):
-        self.state.publish_debug()
-
-        if self.action_publisher.get_num_connections() > 0:
-            action_msg = Float32MultiArray()
-            action_msg.data = action
-            self.action_publisher.publish(action_msg)
-
-        if self.action_publisher_not_normalized.get_num_connections() > 0:
-            action_msg = Float32MultiArray()
-            left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
-                self.robot.scale_action_to_pose(action, self.rot_type)
-            action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy])
-            self.action_publisher_not_normalized.publish(action_msg)
-
-        if self.state_publisher.get_num_connections() > 0:
-            state_msg = Float32MultiArray()
-            state_msg.data = self.create_state_from_buffer()
-            self.state_publisher.publish(state_msg)
-
-        if self.lin_vel_publisher.get_num_connections() > 0:
-            lin_msg = Float32MultiArray()
-            lin_msg.data = self.robot.lin_vel
-            self.lin_vel_publisher.publish(lin_msg)
-
-        if self.ang_vel_publisher.get_num_connections() > 0:
-            ang_msg = Float32MultiArray()
-            ang_msg.data = self.robot.ang_vel
-            self.ang_vel_publisher.publish(ang_msg)
-
-        self.reward_function.publish_reward()
-        if self.refbot_joint_publisher.get_num_connections() > 0:
-            self.refbot.solve_ik_exactly()
-            self.refbot_joint_publisher.publish(self.refbot.get_joint_position_as_msg())
-        if self.refbot_left_foot_publisher.get_num_connections() > 0:
-            self.refbot_left_foot_publisher.publish(self.refbot.get_left_foot_msg())
-        if self.refbot_right_foot_publisher.get_num_connections() > 0:
-            self.refbot_right_foot_publisher.publish(self.refbot.get_right_foot_msg())
-        if self.refbot_pose_publisher.get_num_connections() > 0:
-            self.refbot_pose_publisher.publish(self.refbot.get_pose_msg())
-
-        self.ros_interface.publish_true_odom()
-        if hasattr(self.robot, "joints"):
-            self.ros_interface.publish_joints()
-        self.ros_interface.publish_foot_pressure()
-        self.ros_interface.publish_imu()
-
     def render(self, mode='rgb_array'):
         if mode != 'rgb_array':
             return
             # raise ValueError('Unsupported render mode:{}'.format(mode))
-        view_matrix = self.pybullet_client.computeViewMatrixFromYawPitchRoll(
-            cameraTargetPosition=self.robot.pos_in_world,
-            distance=self.camera_distance,
-            yaw=self.camera_yaw,
-            pitch=self.camera_pitch, roll=0,
-            upAxisIndex=2)
-        proj_matrix = self.pybullet_client.computeProjectionMatrixFOV(fov=60, aspect=float(
-            self.render_width) / self.render_height, nearVal=0.1, farVal=100.0)
-        (_, _, px, _, _) = self.pybullet_client.getCameraImage(width=self.render_width, height=self.render_height,
-                                                               renderer=self.pybullet_client.ER_BULLET_HARDWARE_OPENGL,
-                                                               viewMatrix=view_matrix, projectionMatrix=proj_matrix)
-        rgb_array = np.array(px)
-        rgb_array = rgb_array[:, :, :3]
-        return rgb_array
+
+        return self.sim.get_render(self.render_width, self.render_height, self.camera_distance, self.camera_pitch,
+                                   self.camera_yaw, self.robot.pos_in_world)
 
     def close(self):
         pass  # self.pybullet_client.disconnect()
@@ -711,50 +551,19 @@ def cmd_vel_to_twist(cmd_vel, stop=False):
 
 class WolfgangBulletEnv(DeepQuinticEnv):
 
-    def __init__(self, pybullet_active=True, gui=False, debug=False, trajectory_file=None, early_termination=True,
-                 gravity=True,
-                 step_freq=30, reward_function=None, ep_length_in_s=20, use_engine=True, cartesian_state=False,
-                 cartesian_action=False, relative=False, use_state_buffer=False, only_phase_state=False,
-                 only_base_state=False, use_foot_sensors="", cyclic_phase=True, rot_type='rpy',
-                 use_rt_in_state=False, filter_actions=False, vel_in_state=False, terrain_height=0,
-                 phase_in_state=True, randomize=False, leg_vel_in_state=True):
-        reward = {'DeepMimic': DeepMimicReward,
-                  'DeepMimicAction': DeepMimicActionReward,
-                  'Cartesian': CartesianReward,
-                  'CartesianRelative': CartesianRelativeReward,
-                  'CartesianAction': CartesianActionReward,
-                  'Cassie': CassieReward,
-                  'DeepMimicActionCartesian': DeepMimicActionCartesianReward,
-                  'CassieAction': CassieActionReward,
-                  'CassieCartesian': CassieCartesianReward,
-                  'CassieCartesianAction': CassieCartesianActionReward,
-                  'CartesianActionVel': CartesianActionVelReward,
-                  'EmptyTest': EmptyTest,
-                  'CartesianActionOnly': CartesianActionOnlyReward,
-                  'CassieCartesianActionVel': CassieCartesianActionVelReward,
-                  'JointActionVel': JointActionVelReward,
-                  'SmoothCartesianActionVel': SmoothCartesianActionVelReward,
-                  'CartesianStableActionVel': CartesianStableActionVelReward,
-                  'CartesianDoubleActionVel': CartesianDoubleActionVelReward,
-                  'CartesianActionMovement': CartesianActionMovementReward,
-                  'DeepQuintic': DeepQuinticReward,
-                  'CartesianStateVel': CartesianStateVelReward,
-                  'JointStateVelReward': JointStateVelReward,
-                  None: EmptyTest,
-                  '': EmptyTest}[reward_function]
-        rot = {'rpy': Rot.RPY,
-               'fused': Rot.FUSED,
-               'sixd': Rot.SIXD,
-               'quat': Rot.QUAT}[rot_type]
-
-        DeepQuinticEnv.__init__(self, pybullet_active=pybullet_active, reward_function=reward, used_joints="Legs",
-                                step_freq=step_freq,
-                                ros_debug=debug, gui=gui, trajectory_file=trajectory_file,
-                                early_termination=early_termination, ep_length_in_s=ep_length_in_s, gravity=gravity,
+    def __init__(self, simulator_type="pybullet", reward_function=CartesianActionReward, step_freq=30, ros_debug=False,
+                 gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
+                 cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
+                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
+                 phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
+                 randomize=False, use_complementary_filter=True, random_head_movement=True):
+        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
+                                used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
+                                trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                                 use_engine=use_engine, cartesian_state=cartesian_state,
-                                cartesian_action=cartesian_action, relative=relative, use_state_buffer=use_state_buffer,
-                                only_phase_state=only_phase_state, only_base_state=only_base_state,
-                                use_foot_sensors=use_foot_sensors, cyclic_phase=cyclic_phase, rot_type=rot,
+                                cartesian_action=cartesian_action, relative=relative,
+                                use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
                                 use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
-                                vel_in_state=vel_in_state, terrain_height=terrain_height, phase_in_state=phase_in_state,
-                                randomize=randomize, leg_vel_in_state=leg_vel_in_state)
+                                terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
+                                phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
+                                use_complementary_filter=use_complementary_filter, random_head_movement=random_head_movement)

@@ -1,32 +1,29 @@
 import random
-
-import rospkg
 import math
-import pybullet as p
 import rospy
-from bitbots_msgs.msg import FootPressure
-from moveit_msgs.srv import GetPositionIKRequest, GetPositionFKRequest
-from optuna import TrialPruned
-from scipy import signal
 import numpy as np
-from sensor_msgs.msg import JointState, Imu
-from tf.transformations import euler_from_quaternion
-from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
-from transforms3d.affines import compose, decompose
-from transforms3d.euler import mat2euler, quat2euler, euler2mat, euler2quat
 
-from deep_quintic.utils import Rot, fused2quat, sixd2quat, quat2fused, quat2sixd, compute_ik
-from deep_quintic.state import CartesianState, State, JointSpaceState
-from deep_quintic.utils import compute_imu_orientation_from_world, wxyz2xyzw, xyzw2wxyz
 from transforms3d.quaternions import quat2mat, rotate_vector, qinverse, qmult, mat2quat
+from transforms3d.affines import compose
+from transforms3d.euler import quat2euler, euler2quat
+
 from bitbots_moveit_bindings import get_position_ik, get_position_fk
+from bitbots_msgs.msg import FootPressure
+from moveit_msgs.srv import GetPositionFKRequest
+from sensor_msgs.msg import JointState, Imu
+from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
+
+from deep_quintic.complementary_filter import ComplementaryFilter
+from deep_quintic.simulation import AbstractSim, PybulletSim
+from deep_quintic.utils import Rot, fused2quat, sixd2quat, quat2fused, quat2sixd, compute_ik
+from deep_quintic.utils import compute_imu_orientation_from_world, wxyz2xyzw, xyzw2wxyz
 
 
 class Robot:
-    def __init__(self, pybullet_client=None, compute_joints=False, compute_feet=False, used_joints="Legs",
-                 physics=False, env_time_step=None, compute_smooth_vel=False):
+    def __init__(self, simulation: AbstractSim = None, compute_joints=False, compute_feet=False, used_joints="Legs",
+                 physics=False, compute_smooth_vel=False, use_complementary_filter=True):
         self.physics_active = physics
-        self.pybullet_client = pybullet_client
+        self.sim = simulation
         self.compute_joints = compute_joints
         self.compute_feet = compute_feet
         self.compute_smooth_vel = compute_smooth_vel
@@ -45,7 +42,9 @@ class Robot:
         self.next_quat_in_world = None
         self.quat_in_world = None
         self.previous_quat_in_world = None
-        self.imu_rpy = [0, 0]
+        self.imu_rpy = [0, 0, 0]
+        self.imu_ang_vel = [0, 0, 0]
+        self.imu_lin_acc = [0, 0, 0]
         self.walk_vel = None
         self.last_walk_vels = []
         self.smooth_vel = None
@@ -77,18 +76,17 @@ class Robot:
         self.right_foot_lin_vel = [0, 0, 0]
         self.right_foot_ang_vel = [0, 0, 0]
         self.alpha = 1
+        self.pose_on_episode_start = [0, 0, 0.5], [1, 0, 0, 0]
+        self.complementary_filter = None
+        if use_complementary_filter:
+            self.complementary_filter = ComplementaryFilter()
+        self.last_ik_result = None
 
-        # config values
-        self.initial_joints_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
-                                         "LHipYaw": 0, "LKnee": 60, "RAnklePitch": 30, "RAnkleRoll": 0,
-                                         "RHipPitch": -30, "RHipRoll": 0, "RHipYaw": 0, "RKnee": -60,
-                                         "LShoulderPitch": 75, "LShoulderRoll": 0, "LElbow": 36, "RShoulderPitch": -75,
-                                         "RShoulderRoll": 0, "RElbow": -36, "HeadPan": 0, "HeadTilt": 0}
         # how the foot pos and rpy are scaled. from [-1:1] action to meaningful m or rad
         # foot goal is relative to the start of the leg, so that 0 would be the center of possible poses
         # x, y, z, roll, pitch, yaw
-        self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
-                                      (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+        self.cartesian_limits_left = [(-0.3, 0.3), (-0.05, 0.3), (-0.44, -0.14), (-math.tau / 8, math.tau / 8),
+                                      (-math.tau / 8, math.tau / 8), (-math.tau / 4, math.tau / 4)]
         # right is same just y pos is inverted
         self.cartesian_limits_right = self.cartesian_limits_left.copy()
         self.cartesian_limits_right[1] = (-self.cartesian_limits_left[1][1], -self.cartesian_limits_left[1][0])
@@ -104,6 +102,13 @@ class Robot:
         self.relative_scaling_joint_action = 0.1
         self.relative_scaling_cartesian_action_pos = 0.05
         self.relative_scaling_cartesian_action_ori = math.tau / 24
+
+        self.initial_joint_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
+                                        "LHipYaw": 0, "LKnee": 60, "RAnklePitch": 30, "RAnkleRoll": 0,
+                                        "RHipPitch": -30, "RHipRoll": 0, "RHipYaw": 0, "RKnee": -60,
+                                        "LShoulderPitch": 75, "LShoulderRoll": 0, "LElbow": 36,
+                                        "RShoulderPitch": -75, "RShoulderRoll": 0, "RElbow": -36, "HeadPan": 0,
+                                        "HeadTilt": 0}
 
         self.leg_joints = ["LAnklePitch", "LAnkleRoll", "LHipPitch", "LHipRoll", "LHipYaw", "LKnee",
                            "RAnklePitch", "RAnkleRoll", "RHipPitch", "RHipRoll", "RHipYaw", "RKnee"]
@@ -128,117 +133,30 @@ class Robot:
         # messages for use with python engine interface
         self.joint_state_msg = JointState()
         self.joint_state_msg.header.frame_id = "base_link"
-        self.joint_state_msg.name = self.initial_joints_positions.keys()
+        self.joint_state_msg.name = list(self.initial_joint_positions.keys())
         self.imu_msg = Imu()
         self.imu_msg.header.frame_id = "imu_frame"
-        self.pressure_msg_left = FootPressure()
-        self.pressure_msg_left.header.frame_id = 'l_sole'
-        self.pressure_msg_right = FootPressure()
-        self.pressure_msg_right.header.frame_id = 'r_sole'
+        self.pressure_msg = FootPressure()
         self.left_foot_msg = PoseStamped()
         self.left_foot_msg.header.frame_id = 'base_link'
         self.right_foot_msg = PoseStamped()
         self.right_foot_msg.header.frame_id = 'base_link'
+        self.robot_index = None
 
-        self.pressure_sensors = {}
-        if self.pybullet_client is not None:
-            self.robot_index = None
-            self.joints = {}
+        if self.sim is not None:
             self.links = {}
             self.torso_id = {}
             self.link_masses = []
             self.link_inertias = []
             self.joint_stall_torques = []
             self.joint_max_vels = []
-            self.init_robot_in_sim(physics)
+            self.sim.set_initial_joint_positions(self.initial_joint_positions)
+            self.robot_index = self.sim.add_robot(physics)
 
-    def init_robot_in_sim(self, physics):
-        # Loading robot in simulation
-        if physics:
-            flags = self.pybullet_client.URDF_USE_SELF_COLLISION + \
-                    self.pybullet_client.URDF_USE_INERTIA_FROM_FILE + \
-                    self.pybullet_client.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS
-        else:
-            flags = self.pybullet_client.URDF_USE_INERTIA_FROM_FILE
-
-        rospack = rospkg.RosPack()
-        urdf_file = rospack.get_path("wolfgang_description") + "/urdf/robot.urdf"
-        self.robot_index = self.pybullet_client.loadURDF(urdf_file,
-                                                         self.pos_on_episode_start,
-                                                         self.quat_on_episode_start,
-                                                         flags=flags, useFixedBase=not physics)
-        if not physics:
-            self._disable_physics()
-
-        # Retrieving joints and foot pressure sensors
-        for i in range(self.pybullet_client.getNumJoints(self.robot_index)):
-            joint_info = self.pybullet_client.getJointInfo(self.robot_index, i)
-            name = joint_info[1].decode('utf-8')
-            # we can get the links by seeing where the joint is attached. we only get parent link so do +1
-            self.links[joint_info[12].decode('utf-8')] = joint_info[16] + 1
-            if name in self.initial_joints_positions.keys():
-                # remember joint
-                self.joints[name] = Joint(i, self.robot_index, self.pybullet_client)
-                self.joint_stall_torques.append(joint_info[10])
-                self.joint_max_vels.append(joint_info[11])
-            elif name in ["LLB", "LLF", "LRF", "LRB", "RLB", "RLF", "RRF", "RRB"]:
-                self.pybullet_client.enableJointForceTorqueSensor(self.robot_index, i)
-                self.pressure_sensors[name] = PressureSensor(name, i, self.robot_index, 10, 5, self.pybullet_client)
-        self.torso_id = self.links["torso"]
-
-        for link_id in self.links.values():
-            dynamics_info = self.pybullet_client.getDynamicsInfo(self.robot_index, link_id)
-            self.link_masses.append(dynamics_info[0])
-            self.link_inertias.append(dynamics_info[2])
-
-        # set dynamics for feet, maybe overwritten later by domain randomization
-        for link_name in self.links.keys():
-            if link_name in ["llb", "llf", "lrf", "lrb", "rlb", "rlf", "rrf", "rrb"]:
-                # print(p.getLinkState(self.robot_index, self.links[link_name]))
-                p.changeDynamics(self.robot_index, self.links[link_name], lateralFriction=1, spinningFriction=0.1,
-                                 rollingFriction=0.1, restitution=0.9)
-
-        # robot to initial position
-        self.reset()
-
-    def randomize_links(self, mass_bounds, inertia_bounds):
-        i = 0
-        for link_id in self.links.values():
-            randomized_mass = random.uniform(mass_bounds[0], mass_bounds[1]) * self.link_masses[i]
-            randomized_inertia = random.uniform(inertia_bounds[0], inertia_bounds[1]) * np.array(self.link_inertias[i])
-            self.pybullet_client.changeDynamics(self.robot_index, link_id, mass=randomized_mass,
-                                                localInertiaDiagonal=randomized_inertia)
-            i += 1
-
-    def randomize_joints(self, torque_bounds, vel_bounds):
-        i = 0
-        for joint_name in self.joints.keys():
-            randomized_stall_torque = random.uniform(torque_bounds[0], torque_bounds[1]) * self.joint_stall_torques[i]
-            self.joints[joint_name].max_torque = randomized_stall_torque
-            randomized_max_vel = random.uniform(vel_bounds[0], vel_bounds[1]) * self.joint_max_vels[i]
-            self.joints[joint_name].max_vel = randomized_max_vel
-
-    def randomize_foot_friction(self, restitution_bounds, lateral_friction_bounds, spinning_friction_bounds,
-                                rolling_friction_bounds):
-        # set dynamic values for all foot links
-        rand_restitution = random.uniform(restitution_bounds[0], restitution_bounds[1])
-        rand_lateral_friction = random.uniform(lateral_friction_bounds[0], lateral_friction_bounds[1])
-        rand_spinning_friction = random.uniform(spinning_friction_bounds[0], spinning_friction_bounds[1])
-        rand_rolling_friction = random.uniform(rolling_friction_bounds[0], rolling_friction_bounds[1])
-
-        for link_name in self.links.keys():
-            if link_name in ["llb", "llf", "lrf", "lrb", "rlb", "rlf", "rrf", "rrb"]:
-                p.changeDynamics(self.robot_index, self.links[link_name],
-                                 lateralFriction=rand_lateral_friction,
-                                 spinningFriction=rand_spinning_friction,
-                                 rollingFriction=rand_rolling_friction,
-                                 restitution=rand_restitution)
-
-    def transform_world_to_robot(self, pos_in_world, quat_in_world, lin_vel_in_world,
-                                 ang_vel_in_world):
+    def transform_world_to_robot(self, pos_in_world, quat_in_world, lin_vel_in_world, ang_vel_in_world):
         # transform from world to relative to base link
         robot_mat_in_world = quat2mat(self.quat_in_world)
-        # normally we would just do this, but this takes a lot of CPU. so we do it manually
+        # normally we would just do this, but this takes a lot of CpU. so we do it manually
         # robot_trans_in_world = compose(self.pos_in_world, robot_mat_in_world, [1, 1, 1])
         # world_trans_in_robot = np.linalg.inv(robot_trans_in_world)
         inv_rot = robot_mat_in_world.T
@@ -270,21 +188,50 @@ class Robot:
 
         return pos_in_robot, quat_in_robot, rel_lin_vel, rel_ang_vel
 
+    def update_complementary_filter(self, dt):
+        # get measured imu values if available
+        if not isinstance(self.sim, PybulletSim):
+            self.imu_ang_vel = self.sim.get_imu_ang_vel()
+            self.imu_lin_acc = self.sim.get_imu_lin_acc()
+        else:
+            # otherwise use the true values from simulation
+            # simple acceleration computation by using diff of velocities
+            linear_acc = np.array(list(map(lambda i, j: i - j, self.last_lin_vel, self.lin_vel)))
+            # adding gravity to the acceleration, following REP-145
+            gravity_world_frame = np.array([0, 0, 9.81])
+            gravity_robot_frame = rotate_vector(gravity_world_frame, qinverse(self.quat_in_world))
+            lin_acc = linear_acc + gravity_robot_frame
+
+            lin_vel_in_world, ang_vel_in_world = self.sim.get_base_velocity(self.robot_index)
+            ang_vel = rotate_vector(ang_vel_in_world, qinverse(self.quat_in_world))
+
+            self.imu_ang_vel = ang_vel
+            self.imu_lin_acc = lin_acc
+
+        # don't take true value from simulation but estimation from imu filter
+        if (self.ang_vel[0] != 0 or self.ang_vel[1] != 0 or self.ang_vel[2] != 0) and (self.imu_lin_acc[0] != 0 or \
+                                                                                       self.imu_lin_acc[1] != 0 or
+                                                                                       self.imu_lin_acc[2] != 0):
+            self.complementary_filter.update(*self.imu_lin_acc, *self.imu_ang_vel, dt)
+
+        if self.complementary_filter.getDoBiasEstimation():
+            self.imu_ang_vel[0] -= self.complementary_filter.getAngularVelocityBiasX()
+            self.imu_ang_vel[1] -= self.complementary_filter.getAngularVelocityBiasY()
+            self.imu_ang_vel[2] -= self.complementary_filter.getAngularVelocityBiasZ()
+
     def update(self):
         """
-        Updates the state of the robot from pybullet. This is only done once per step to improve performance.
+        Updates the state of the robot from simulation. This is only done once per step to improve performance.
         """
         self.previous_pos_in_world = self.pos_in_world
         self.previous_quat_in_world = self.quat_in_world
-        (x, y, z), (qx, qy, qz, qw) = self.pybullet_client.getBasePositionAndOrientation(self.robot_index)
-        self.pos_in_world = np.array([x, y, z])
-        self.quat_in_world = xyzw2wxyz([qx, qy, qz, qw])
+        self.pos_in_world, self.quat_in_world = self.sim.get_base_position_and_orientation(self.robot_index)
 
         # imu orientation has roll and pitch relative to gravity vector. yaw in world frame
         self.imu_rpy, yaw_quat = compute_imu_orientation_from_world(self.quat_in_world)
         # rotate velocities from world to robot frame
         self.last_lin_vel = self.lin_vel
-        lin_vel_in_world, ang_vel_in_world = self.pybullet_client.getBaseVelocity(self.robot_index)
+        lin_vel_in_world, ang_vel_in_world = self.sim.get_base_velocity(self.robot_index)
         walk_lin_vel = rotate_vector(lin_vel_in_world, qinverse(yaw_quat))
         walk_ang_vel = rotate_vector(ang_vel_in_world, qinverse(yaw_quat))
         self.walk_vel = np.concatenate([walk_lin_vel[:2], walk_ang_vel[2:3]])
@@ -293,46 +240,35 @@ class Robot:
                 self.last_walk_vels.pop(0)
             self.last_walk_vels.append(self.walk_vel)
             self.smooth_vel = np.array(self.last_walk_vels).mean(axis=0)
+
         self.lin_vel = rotate_vector(lin_vel_in_world, qinverse(self.quat_in_world))
         self.ang_vel = rotate_vector(ang_vel_in_world, qinverse(self.quat_in_world))
         if self.last_lin_vel is None:
             # handle issues on start of episode
             self.last_lin_vel = self.lin_vel
 
-        # simple acceleration computation by using diff of velocities
-        linear_acc = np.array(list(map(lambda i, j: i - j, self.last_lin_vel, self.lin_vel)))
-        # adding gravity to the acceleration, following REP-145
-        gravity_world_frame = np.array([0, 0, 9.81])
-        gravity_robot_frame = rotate_vector(gravity_world_frame, qinverse(self.quat_in_world))
-        self.lin_acc = linear_acc + gravity_robot_frame
+        if self.complementary_filter is not None:
+            imu_quat = self.complementary_filter.getOrientation()
+            imu_rpy = quat2euler(imu_quat)
+            self.imu_rpy = [imu_rpy[0], imu_rpy[1], 0]
 
         # compute joints
         if self.compute_joints:
             self.previous_joint_positions = self.joint_positions
-            self.joint_positions = []
-            self.joint_velocities = []
-            self.joint_torques = []
-            for joint_name in self.used_joint_names:
-                joint = self.joints[joint_name]
-                pos, vel, tor = joint.update()
-                self.joint_positions.append(pos)
-                self.joint_velocities.append(vel)
-                self.joint_torques.append(tor)
+            self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
+                self.used_joint_names, self.robot_index)
 
         # foot poses
         if self.compute_feet:
             # left foot
-            _, _, _, _, foot_pos_in_world, foot_xyzw_in_world, lin_vel_in_world, ang_vel_in_world = p.getLinkState(
-                self.robot_index, self.links["l_sole"], 1, 0)
-            foot_quat_in_world = xyzw2wxyz(foot_xyzw_in_world)
+            foot_pos_in_world, foot_quat_in_world, lin_vel_in_world, ang_vel_in_world = self.sim.get_link_values(
+                "l_sole", self.robot_index)
             self.left_foot_pos, self.left_foot_quat, self.left_foot_lin_vel, self.left_foot_ang_vel = self.transform_world_to_robot(
                 foot_pos_in_world, foot_quat_in_world, lin_vel_in_world, ang_vel_in_world)
 
             # right foot
-            _, _, _, _, foot_pos_in_world, foot_xyzw_in_world, lin_vel_in_world, ang_vel_in_world = p.getLinkState(
-                self.robot_index, self.links["r_sole"], 1, 0)
-            # PyBullet does weird stuff and rotates our feet
-            foot_quat_in_world = xyzw2wxyz(foot_xyzw_in_world)
+            foot_pos_in_world, foot_quat_in_world, lin_vel_in_world, ang_vel_in_world = self.sim.get_link_values(
+                "r_sole", self.robot_index)
             self.right_foot_pos, self.right_foot_quat, self.right_foot_lin_vel, self.right_foot_ang_vel = self.transform_world_to_robot(
                 foot_pos_in_world, foot_quat_in_world, lin_vel_in_world, ang_vel_in_world)
 
@@ -341,14 +277,12 @@ class Robot:
             i = 0
             # iterate through all joints, always in same order to keep the same matching between NN and simulation
             for joint_name in self.used_joint_names:
-                # scaling needed since action space is -1 to 1, but joints have lower and upper limits
-                joint = self.joints[joint_name]
                 if relative:
-                    goal_position = joint.get_position() + action[
-                        i] * self.relative_scaling_joint_action  # todo we can get out of bounds by this
-                    joint.set_position(goal_position)
+                    goal_position = action[i] * self.relative_scaling_joint_action  # todo makes this sense?
                 else:
-                    joint.set_scaled_position(action[i])
+                    goal_position = action[i]
+                self.sim.set_joint_position(joint_name, goal_position, scaled=True, relative=relative,
+                                            robot_index=self.robot_index)
                 i += 1
             return True
         else:
@@ -364,10 +298,12 @@ class Robot:
             ik_result, success = compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat,
                                             self.used_joint_names, self.joint_indexes, collision=False,
                                             approximate=True)
+            self.last_ik_result = ik_result
             if success:
-                for i in range(len(self.leg_joints)):
-                    joint = self.joints[self.leg_joints[i]]
-                    joint.set_position(ik_result[i])
+                i = 0
+                for joint_name in self.leg_joints:
+                    self.sim.set_joint_position(joint_name, ik_result[i], robot_index=self.robot_index)
+                    i += 1
                 return True
             else:
                 return False
@@ -418,48 +354,48 @@ class Robot:
         self.joint_positions = self.next_joint_positions
         self.next_joint_positions = None
 
+    def step_pressure_filters(self):
+        self.sim.step_pressure_filters(self.robot_index)
+
     def is_alive(self):
         alive = True
-        (x, y, z), (a, b, c, d), _, _, _, _ = self.get_head_pose()
+        (x, y, z), _, _, _ = self.sim.get_link_values("head", self.robot_index)
 
         # head higher than starting position of body
         alive = alive and z > self.get_start_height()
         # angle of the robot in roll and pitch not to far from zero
-        alive = alive and abs(self.imu_rpy[0] < math.tau / 4) and abs(self.imu_rpy[1] < math.tau / 4)
+        rpy = quat2euler(self.quat_in_world)
+        alive = alive and abs(rpy[0] < math.tau / 4) and abs(rpy[1] < math.tau / 4)
         return alive
 
-    def reset_joints_to_init_pos(self):
-        # set joints to initial position
-        for name in self.joints:
-            joint = self.joints[name]
-            pos_in_rad = math.radians(self.initial_joints_positions[name])
-            joint.reset_position(pos_in_rad, 0)
-            joint.set_position(pos_in_rad)
-
     def reset(self):
-        # todo this does not follow wxyz convention
-        self.pose_on_episode_start = ([0, 0, 0.43], p.getQuaternionFromEuler((0, 0.25, 0)))
-        self.reset_joints_to_init_pos()
+        self.pose_on_episode_start = ([0, 0, 0.43], euler2quat(0, 0.25, 0))
+        self.sim.reset_joints_to_init_pos(self.robot_index)
 
-        for sensor in self.pressure_sensors.values():
-            sensor.reset()
+        self.sim.reset_pressure_filters(self.robot_index)
+        if self.complementary_filter is not None:
+            self.complementary_filter.reset(euler2quat(0, 0.25, 0))
 
         # reset body pose and velocity
-        self.pybullet_client.resetBasePositionAndOrientation(self.robot_index, self.pose_on_episode_start[0],
-                                                             self.pose_on_episode_start[1])
-        self.pybullet_client.resetBaseVelocity(self.robot_index, [0, 0, 0], [0, 0, 0])
+        self.sim.reset_base_position_and_orientation(self.pose_on_episode_start[0],
+                                                     self.pose_on_episode_start[1], self.robot_index)
+        self.sim.reset_base_velocity([0, 0, 0], [0, 0, 0], self.robot_index)
         self.update()
         # make sure we dont get artefacts in accelerometer
+        self.lin_vel = [0, 0, 0]
         self.last_lin_vel = self.lin_vel
 
-    def reset_to_reference(self, refbot: "Robot", randomize):
+    def reset_to_reference(self, refbot: "Robot", randomize, additional_height=0):
         self.pose_on_episode_start = (refbot.pos_in_world, refbot.quat_in_world)
-        self.pose_on_episode_start[0][2] += 0.07
-        self.pybullet_client.resetBasePositionAndOrientation(self.robot_index, self.pose_on_episode_start[0],
-                                                             wxyz2xyzw(self.pose_on_episode_start[1]))
-        self.pybullet_client.resetBaseVelocity(self.robot_index, refbot.lin_vel, refbot.ang_vel)
+        self.pose_on_episode_start[0][2] += additional_height
+        self.sim.reset_base_position_and_orientation(self.pose_on_episode_start[0],
+                                                     self.pose_on_episode_start[1], self.robot_index, )
+        self.sim.reset_base_velocity(refbot.lin_vel, refbot.ang_vel, self.robot_index)
         # set all joints to initial position since they can be modified from last fall
-        self.reset_joints_to_init_pos()
+        self.sim.reset_joints_to_init_pos(self.robot_index)
+        self.sim.reset_pressure_filters(self.robot_index)
+        if self.complementary_filter is not None:
+            self.complementary_filter.reset(refbot.quat_in_world)
 
         # first compute the joints via IK
         refbot.solve_ik_exactly()
@@ -471,26 +407,27 @@ class Robot:
             joint_pos = refbot.joint_positions[i]
             if randomize:
                 joint_pos = random.uniform(-0.1, 0.1) + joint_pos
-            self.joints[joint_name].reset_position(joint_pos, vel)
+            self.sim.reset_joint_to_position(joint_name, joint_pos, vel, self.robot_index)
             i += 1
         self.update()
         self.last_lin_vel = self.lin_vel
 
     def reset_base_to_pose(self, pos, quat):
-        self.pybullet_client.resetBasePositionAndOrientation(self.robot_index, pos, wxyz2xyzw(quat))
-        self.pybullet_client.resetBaseVelocity(self.robot_index, [0, 0, 0], [0, 0, 0])
+        self.sim.reset_base_position_and_orientation(self.robot_index, pos, quat)
+        self.sim.reset_base_velocity(self.robot_index, [0, 0, 0], [0, 0, 0])
 
     def update_ref_in_sim(self):
-        self.pybullet_client.resetBasePositionAndOrientation(self.robot_index, self.pos_in_world,
-                                                             wxyz2xyzw(self.quat_in_world))
+        self.sim.reset_base_position_and_orientation(self.pos_in_world, self.quat_in_world, self.robot_index)
         self.solve_ik_exactly()
         i = 0
         for joint_name in self.used_joint_names:
-            self.joints[joint_name].reset_position(self.joint_positions[i], 0)
+            self.sim.reset_joint_to_position(joint_name, self.joint_positions[i], velocity=0,
+                                             robot_index=self.robot_index)
             i += 1
 
     def solve_ik_exactly(self):
         # only compute if not already done to prevent unnecessary cpu load
+        joint_results = None
         if self.joint_positions is None:
             # the trajectories are solvable. if computer load is high sometimes IK does not return meaningful result
             success = False
@@ -541,8 +478,8 @@ class Robot:
                  random.uniform(-max_force, max_force)]
         torque = [random.uniform(-max_torque, max_torque), random.uniform(-max_torque, max_torque),
                   random.uniform(-max_torque, max_torque)]
-        self.pybullet_client.applyExternalForce(self.robot_index, self.torso_id, force, [0, 0, 0], flags=p.WORLD_FRAME)
-        self.pybullet_client.applyExternalTorque(self.robot_index, self.torso_id, torque, flags=p.WORLD_FRAME)
+        self.sim.apply_external_force_to_base(force, self.robot_index)
+        self.sim.apply_external_torque_to_base(torque, self.robot_index)
 
     def get_init_mu(self, cartesian_action, rot_type, refbot):
         """Get the mu values that can be used on learning start to search from a standing pose."""
@@ -581,13 +518,9 @@ class Robot:
                 # compute from refbot
                 i = 0
                 for joint_name in self.used_joint_names:
-                    joint = self.joints[joint_name]
-                    mu_values.append(joint.convert_radiant_to_scaled(refbot.joint_positions[i]))
+                    mu_values.append(self.sim.convert_radiant_to_scaled(joint_name, refbot.joint_positions[i]))
                     i += 1
             return mu_values
-
-    def get_head_pose(self):
-        return self.pybullet_client.getLinkState(self.robot_index, self.links["head"])
 
     def get_start_height(self):
         return self.pose_on_episode_start[0][2]
@@ -603,28 +536,26 @@ class Robot:
         right_leg_in_world = np.matmul(world_to_robot_trans, right_leg_vector)[:-1]
         return left_leg_in_world, right_leg_in_world
 
-    def scale_joint_positions(self, positions):
+    def joints_radiant_to_scaled(self, positions):
         scaled = []
         i = 0
         for joint_name in self.used_joint_names:
-            joint = self.joints[joint_name]
-            scaled.append(joint.convert_radiant_to_scaled(positions[i]))
+            scaled.append(self.sim.convert_radiant_to_scaled(joint_name, positions[i], self.robot_index))
             i += 1
         return scaled
 
-    def scale_action_to_motor_goal(self, action):
+    def joints_scaled_to_radiant(self, action):
         motor_goal = []
         i = 0
         for joint_name in self.used_joint_names:
-            joint = self.joints[joint_name]
-            motor_goal.append(joint.convert_scaled_to_radiant(action[i]))
+            motor_goal.append(self.sim.convert_scaled_to_radiant(joint_name, action[i], self.robot_index))
             i += 1
         return motor_goal
 
     def scale_action_to_pose(self, action, rot_type):
         # todo here we convert first to euler since our scaling is in this, maybe change this directly to quat somehow
         # action is structured as left_pos, left_rot, right_pos, right_rot
-        # based on rot type we have different number of values. first transform to RPY then scale
+        # based on rot type we have different number of values. first transform to RpY then scale
         if rot_type == Rot.RPY:
             # nothing to to
             action_rpy = action
@@ -715,15 +646,17 @@ class Robot:
         return np.concatenate([action_left_pos, action_left_rpy, action_right_pos, action_right_rpy])
 
     def set_joint_pos_vel(self, positions, velocities):
+        # todo refactor
         # hacky method to let env run on actual robot
         for name, position, velocity in zip(self.used_joint_names, positions, velocities):
             self.joints[name].state = [position, velocity, 0, 0]
 
     def get_imu_msg(self):
         imu_quat = euler2quat(*self.imu_rpy, axes='sxyz')
+        # change to ros standard
         self.imu_msg.orientation = Quaternion(*wxyz2xyzw(imu_quat))
-        self.imu_msg.angular_velocity = Vector3(*self.ang_vel)
-        self.imu_msg.linear_acceleration = Vector3(*self.lin_acc)
+        self.imu_msg.angular_velocity = Vector3(*self.imu_ang_vel)
+        self.imu_msg.linear_acceleration = Vector3(*self.imu_lin_acc)
         return self.imu_msg
 
     def get_pose_msg(self):
@@ -733,26 +666,18 @@ class Robot:
         msg.pose.orientation = Quaternion(*wxyz2xyzw(self.quat_in_world))
         return msg
 
-    def get_joint_state_msg(self):
-        positions = []
-        velocities = []
-        efforts = []
-        for name in self.joint_state_msg.name:
-            joint = self.joints[name]
-            positions.append(joint.get_position())
-            velocities.append(joint.get_velocity())
-            efforts.append(joint.get_torque())
-        self.joint_state_msg.position = positions
-        self.joint_state_msg.velocity = velocities
-        self.joint_state_msg.effort = efforts
+    def get_joint_state_msg(self, stamped=False):
+        if stamped:
+            self.joint_state_msg.header.stamp = rospy.Time.now()
+        if self.joint_positions is None:
+            self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
+                self.used_joint_names, self.robot_index)
+        self.joint_state_msg.position = self.joint_positions
+        if self.joint_velocities is not None:
+            self.joint_state_msg.velocity = self.joint_velocities
+        if self.joint_torques is not None:
+            self.joint_state_msg.effort = self.joint_torques
         return self.joint_state_msg
-
-    def get_joint_position_as_msg(self):
-        msg = JointState()
-        msg.header.stamp = rospy.Time.now()
-        msg.name = self.used_joint_names
-        msg.position = self.joint_positions
-        return msg
 
     def get_left_foot_msg(self):
         self.left_foot_msg.pose = Pose(Point(*self.left_foot_pos), Quaternion(*wxyz2xyzw(self.left_foot_quat)))
@@ -762,174 +687,30 @@ class Robot:
         self.right_foot_msg.pose = Pose(Point(*self.right_foot_pos), Quaternion(*wxyz2xyzw(self.right_foot_quat)))
         return self.right_foot_msg
 
-    def get_pressure_filtered_left(self):
-        if len(self.pressure_sensors) == 0:
-            print("No pressure sensors found in simulation model")
-            return self.pressure_msg_left
-        f_llb = self.pressure_sensors["LLB"].get_force()
-        f_llf = self.pressure_sensors["LLF"].get_force()
-        f_lrf = self.pressure_sensors["LRF"].get_force()
-        f_lrb = self.pressure_sensors["LRB"].get_force()
-        self.pressure_msg_left.left_back = f_llb[1]
-        self.pressure_msg_left.left_front = f_llf[1]
-        self.pressure_msg_left.right_front = f_lrf[1]
-        self.pressure_msg_left.right_back = f_lrb[1]
-        return self.pressure_msg_left
+    def get_pressure(self, left, filtered, time=True):
+        if left:
+            names = ["LLB", "LLF", "LRF", "LRB"]
+            self.pressure_msg.header.frame_id = 'l_sole'
+        else:
+            names = ["RLB", "RLF", "RRF", "RRB"]
+            self.pressure_msg.header.frame_id = 'r_sole'
 
-    def get_pressure_filtered_right(self):
-        if len(self.pressure_sensors) == 0:
-            print("No pressure sensors found in simulation model")
-            return self.pressure_msg_right
-        f_rlb = self.pressure_sensors["RLB"].get_force()
-        f_rlf = self.pressure_sensors["RLF"].get_force()
-        f_rrf = self.pressure_sensors["RRF"].get_force()
-        f_rrb = self.pressure_sensors["RRB"].get_force()
-        self.pressure_msg_right.left_back = f_rlb[1]
-        self.pressure_msg_right.left_front = f_rlf[1]
-        self.pressure_msg_right.right_front = f_rrf[1]
-        self.pressure_msg_right.right_back = f_rrb[1]
-        return self.pressure_msg_right
+        self.pressure_msg.left_back = self.sim.get_sensor_force(names[0], filtered, self.robot_index)
+        self.pressure_msg.left_front = self.sim.get_sensor_force(names[1], filtered, self.robot_index)
+        self.pressure_msg.right_front = self.sim.get_sensor_force(names[2], filtered, self.robot_index)
+        self.pressure_msg.right_back = self.sim.get_sensor_force(names[3], filtered, self.robot_index)
+        if time:
+            self.pressure_msg.header.stamp = rospy.Time.now()
+        return self.pressure_msg
 
     def set_alpha(self, alpha):
         if self.alpha != alpha:
             # only change if the value changed, for better performance
-            ref_col = [1, 1, 1, alpha]
-            self.pybullet_client.changeVisualShape(self.robot_index, -1, rgbaColor=ref_col)
-            for l in range(self.pybullet_client.getNumJoints(self.robot_index)):
-                self.pybullet_client.changeVisualShape(self.robot_index, l, rgbaColor=ref_col)
             self.alpha = alpha
+            self.sim.set_alpha(alpha, self.robot_index)
 
-    def _disable_physics(self):
-        self.pybullet_client.changeDynamics(self.robot_index, -1, linearDamping=0, angularDamping=0)
-        self.pybullet_client.setCollisionFilterGroupMask(self.robot_index, -1, collisionFilterGroup=0,
-                                                         collisionFilterMask=0)
-        self.pybullet_client.changeDynamics(self.robot_index, -1,
-                                            activationState=self.pybullet_client.ACTIVATION_STATE_SLEEP +
-                                                            self.pybullet_client.ACTIVATION_STATE_ENABLE_SLEEPING +
-                                                            self.pybullet_client.ACTIVATION_STATE_DISABLE_WAKEUP)
-        num_joints = self.pybullet_client.getNumJoints(self.robot_index)
-        for j in range(num_joints):
-            self.pybullet_client.setCollisionFilterGroupMask(self.robot_index, j, collisionFilterGroup=0,
-                                                             collisionFilterMask=0)
-            self.pybullet_client.changeDynamics(self.robot_index, j,
-                                                activationState=self.pybullet_client.ACTIVATION_STATE_SLEEP +
-                                                                self.pybullet_client.ACTIVATION_STATE_ENABLE_SLEEPING +
-                                                                self.pybullet_client.ACTIVATION_STATE_DISABLE_WAKEUP)
-
-
-class Joint:
-    def __init__(self, joint_index, body_index, pybullet_client):
-        self.pybullet_client = pybullet_client
-        self.joint_index = joint_index
-        self.body_index = body_index
-        joint_info = self.pybullet_client.getJointInfo(self.body_index, self.joint_index)
-        self.name = joint_info[1].decode('utf-8')
-        self.type = joint_info[2]
-        self.max_force = joint_info[10]
-        self.max_velocity = joint_info[11]
-        self.lowerLimit = joint_info[8]
-        self.upperLimit = joint_info[9]
-        self.mid_position = 0.5 * (self.lowerLimit + self.upperLimit)
-        position, velocity, forces, applied_torque = self.pybullet_client.getJointState(self.body_index,
-                                                                                        self.joint_index)
-        self.state = position, velocity, forces, applied_torque
-
-    def update(self):
-        """
-        Called just once per step to update state from simulation. Improves performance.
-        """
-        position, velocity, forces, applied_torque = self.pybullet_client.getJointState(self.body_index,
-                                                                                        self.joint_index)
-        self.state = position, velocity, forces, applied_torque
-        return position, velocity, applied_torque
-
-    def reset_position(self, position, velocity):
-        self.pybullet_client.resetJointState(self.body_index, self.joint_index, targetValue=position,
-                                             targetVelocity=velocity)
-
-    def disable_motor(self):
-        self.pybullet_client.setJointMotorControl2(self.body_index, self.joint_index,
-                                                   controlMode=self.pybullet_client.POSITION_CONTROL, targetPosition=0,
-                                                   targetVelocity=0, positionGain=0.1, velocityGain=0.1, force=0)
-
-    def set_position(self, position):
-        # enforce limits
-        position = min(self.upperLimit, max(self.lowerLimit, position))
-        self.pybullet_client.setJointMotorControl2(self.body_index, self.joint_index,
-                                                   self.pybullet_client.POSITION_CONTROL,
-                                                   targetPosition=position, force=self.max_force,
-                                                   maxVelocity=self.max_velocity)
-
-    def set_scaled_position(self, position):
-        self.set_position(self.convert_scaled_to_radiant(position))
-
-    def reset_scaled_position(self, position):
-        # sets position inside limits with a given position values in [-1, 1]
-        self.reset_position(self.convert_scaled_to_radiant(position), 0)
-
-    def get_state(self):
-        return self.state
-
-    def get_position(self):
-        return self.state[0]
-
-    def get_scaled_position(self):
-        return self.convert_radiant_to_scaled(self.state[0])
-
-    def get_velocity(self):
-        return self.state[1]
-
-    def get_scaled_velocity(self):
-        return self.get_velocity() * 0.01
-
-    def get_torque(self):
-        position, velocity, forces, applied_torque = self.state
-        return applied_torque
-
-    def convert_radiant_to_scaled(self, pos):
-        # helper method to convert to scaled position between [-1,1] for this joint using min max scaling
-        return 2 * (pos - self.mid_position) / (self.upperLimit - self.lowerLimit)
-
-    def convert_scaled_to_radiant(self, position):
-        # helper method to convert to scaled position for this joint using min max scaling
-        return position * (self.upperLimit - self.lowerLimit) / 2 + self.mid_position
-
-
-class PressureSensor:
-    def __init__(self, name, joint_index, body_index, cutoff, order, pybullet_client):
-        self.pybullet_client = pybullet_client
-        self.joint_index = joint_index
-        self.name = name
-        self.body_index = body_index
-        nyq = 240 * 0.5  # nyquist frequency from simulation frequency
-        normalized_cutoff = cutoff / nyq  # cutoff freq in hz
-        self.filter_b, self.filter_a = signal.butter(order, normalized_cutoff, btype='low')
-        self.filter_state = None
-        self.reset()
-        self.unfiltered = 0
-        self.filtered = [0]
-
-    def reset(self):
-        self.filter_state = signal.lfilter_zi(self.filter_b, self.filter_a)
-
-    def filter_step(self, unfiltered=None):
-        if unfiltered is None:
-            self.unfiltered = self.pybullet_client.getJointState(self.body_index, self.joint_index)[2][2] * -1
-        self.filtered, self.filter_state = signal.lfilter(self.filter_b, self.filter_a, [self.unfiltered],
-                                                          zi=self.filter_state)
-
-    def get_force(self):
-        return max(self.unfiltered, 0), max(self.filtered[0], 0)
-
-    def get_value(self, type):
-        if type == "filtered":
-            return max(self.filtered[0], 0)
-        elif type == "raw":
-            return max(self.unfiltered, 0)
-        elif type == "binary":
-            if self.unfiltered > 10:
-                return 1
-            else:
-                return 0
-        else:
-            print(f"type '{type}' not know")
+    def set_random_head_goals(self):
+        pan = random.uniform(-1, 1)
+        self.sim.set_joint_position("HeadPan", pan, scaled=True, relative=False, robot_index=self.robot_index)
+        tilt = random.uniform(-1, 1)
+        self.sim.set_joint_position("HeadTilt", tilt, scaled=True, relative=False, robot_index=self.robot_index)

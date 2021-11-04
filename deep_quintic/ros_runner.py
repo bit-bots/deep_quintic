@@ -2,6 +2,9 @@
 # necessary to register envs
 import time
 
+import rosparam
+import rospkg
+
 import deep_quintic
 import argparse
 import glob
@@ -32,6 +35,7 @@ from deep_quintic import WolfgangBulletEnv
 from deep_quintic.robot import Robot
 from deep_quintic.state import CartesianState, BaseState
 from deep_quintic.utils import Rot, compute_ik
+from parallel_parameter_search.utils import load_yaml_to_param
 
 ALGOS = {
     "a2c": A2C,
@@ -86,7 +90,9 @@ class ExecuteEnv(WolfgangBulletEnv):
         # additional class variables we need since we are not running the walking at the same time
         self.refbot.phase = 0
         self.last_time = None
-        self.freq = 1.3  # todo read from yaml or better get from saved env
+        rospack = rospkg.RosPack()
+        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", "/config/deep_quintic.yaml", rospack)
+        self.freq = rosparam.get_param("/walking/engine/freq")
 
         # todo we dont initilize action filter correctly. history is empty
 
@@ -156,7 +162,7 @@ class ExecuteEnv(WolfgangBulletEnv):
                                                 collision=False, approximate=True)
                 msg.positions = list(ik_result)
             else:
-                msg.positions = self.robot.scale_action_to_motor_goal(action)
+                msg.positions = self.robot.joints_scaled_to_radiant(action)
             self.joint_publisher.publish(msg)
             self.publish(action)
 

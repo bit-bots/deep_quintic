@@ -8,16 +8,11 @@ from enum import Enum
 import gym
 import numpy as np
 import rospy
-from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
-from moveit_msgs.srv import GetPositionIKRequest, GetPositionIKResponse, GetPositionFKRequest
-from stable_baselines3.common.vec_env import DummyVecEnv
+from geometry_msgs.msg import Point, Quaternion
+from moveit_msgs.srv import GetPositionIKRequest
 
-import functools
-import inspect
-import pybullet
 
 from bitbots_moveit_bindings import get_position_ik, get_position_fk
-from tf.transformations import quaternion_from_euler
 from transforms3d.euler import quat2euler, euler2quat
 from transforms3d.quaternions import rotate_vector, qinverse, quat2mat, mat2quat
 
@@ -84,48 +79,6 @@ def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, u
             index = joint_indexes[joint_name]
             joint_positions[index] = ik_result.solution.joint_state.position[i]
     return joint_positions, success
-
-
-class BulletClient(object):
-    """A wrapper for pybullet to manage different clients.
-    from https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/gym/pybullet_utils/bullet_client.py"""
-
-    def __init__(self, connection_mode=None):
-        """Creates a Bullet client and connects to a simulation.
-        Args:
-          connection_mode:
-            `None` connects to an existing simulation or, if fails, creates a
-              new headless simulation,
-            `pybullet.GUI` creates a new simulation with a GUI,
-            `pybullet.DIRECT` creates a headless simulation,
-            `pybullet.SHARED_MEMORY` connects to an existing simulation.
-        """
-        self._shapes = {}
-        if connection_mode is None:
-            self._client = pybullet.connect(pybullet.SHARED_MEMORY)
-            if self._client >= 0:
-                return
-            else:
-                connection_mode = pybullet.DIRECT
-        self._client = pybullet.connect(connection_mode)
-
-    def __del__(self):
-        """Clean up connection if not already done."""
-        if self._client >= 0:
-            try:
-                pybullet.disconnect(physicsClientId=self._client)
-                self._client = -1
-            except pybullet.error:
-                pass
-
-    def __getattr__(self, name):
-        """Inject the client id into Bullet functions."""
-        attribute = getattr(pybullet, name)
-        if inspect.isbuiltin(attribute):
-            attribute = functools.partial(attribute, physicsClientId=self._client)
-        if name == "disconnect":
-            self._client = -1
-        return attribute
 
 
 def quat2sixd(quat_wxyz):

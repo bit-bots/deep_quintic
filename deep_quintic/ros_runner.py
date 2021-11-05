@@ -36,6 +36,7 @@ from deep_quintic.robot import Robot
 from deep_quintic.state import CartesianState, BaseState
 from deep_quintic.utils import Rot, compute_ik
 from parallel_parameter_search.utils import load_yaml_to_param
+from deep_quintic.reward import CartesianActionReward
 
 ALGOS = {
     "a2c": A2C,
@@ -67,23 +68,22 @@ class DummyPressureSensor:
 
 
 class ExecuteEnv(WolfgangBulletEnv):
-    def __init__(self, pybullet_active=True, gui=False, debug=False, trajectory_file=None, early_termination=True,
-                 gravity=True,
-                 step_freq=30, reward_function=None, ep_length_in_s=20, use_engine=True, cartesian_state=False,
-                 cartesian_action=False, relative=False, use_state_buffer=False, only_phase_state=False,
-                 only_base_state=False, use_foot_sensors="", cyclic_phase=True, rot_type='rpy',
-                 use_rt_in_state=False, filter_actions=False, vel_in_state=False, terrain_height=0,
-                 phase_in_state=True, randomize=False, leg_vel_in_state=True):
-        super().__init__(pybullet_active=not cartesian_action, debug=True,
-                         reward_function=reward_function, step_freq=step_freq, gui=gui, trajectory_file=trajectory_file,
-                         early_termination=early_termination, ep_length_in_s=ep_length_in_s, gravity=gravity,
+    def __init__(self, simulator_type="pybullet", reward_function=CartesianActionReward, step_freq=30, ros_debug=False,
+                 gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
+                 cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
+                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
+                 phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
+                 randomize=False, use_complementary_filter=True, random_head_movement=True):
+        super().__init__(simulator_type=simulator_type, reward_function=reward_function, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
+                         trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                          use_engine=use_engine, cartesian_state=cartesian_state,
-                         cartesian_action=cartesian_action, relative=relative, use_state_buffer=use_state_buffer,
-                         only_phase_state=only_phase_state, only_base_state=only_base_state,
-                         use_foot_sensors=use_foot_sensors, cyclic_phase=cyclic_phase, rot_type=rot_type,
+                         cartesian_action=cartesian_action, relative=relative,
+                         use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
                          use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
-                         vel_in_state=vel_in_state, terrain_height=terrain_height, phase_in_state=phase_in_state,
-                         randomize=randomize, leg_vel_in_state=leg_vel_in_state)
+                         terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
+                         phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
+                         use_complementary_filter=False, random_head_movement=False)
+        rospy.init_node("rl_walk")
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
 
@@ -113,24 +113,24 @@ class ExecuteEnv(WolfgangBulletEnv):
                                                           queue_size=1)
         self.imu_sub = rospy.Subscriber('imu/data', Imu, self.imu_cb, queue_size=1)
         self.joint_state_sub = rospy.Subscriber('joint_states', JointState, self.joint_state_cb, queue_size=1)
-        if use_foot_sensors == "filtered":
+        if foot_sensors_type == "filtered":
             self.left_pressure_sub = rospy.Subscriber('foot_pressure_left/filtered', FootPressure,
                                                       lambda msg: self.foot_pressure_cb(msg, True),
                                                       queue_size=1)
             self.right_pressure_sub = rospy.Subscriber('foot_pressure_right/filtered', FootPressure,
                                                        lambda msg: self.foot_pressure_cb(msg, False),
                                                        queue_size=1)
-        elif use_foot_sensors in ["raw", "binary"]:
+        elif foot_sensors_type in ["raw", "binary"]:
             self.left_pressure_sub = rospy.Subscriber('foot_pressure_left/raw', FootPressure,
                                                       lambda msg: self.foot_pressure_cb(msg, True),
                                                       queue_size=1)
             self.right_pressure_sub = rospy.Subscriber('foot_pressure_right/raw', FootPressure,
                                                        lambda msg: self.foot_pressure_cb(msg, False),
                                                        queue_size=1)
-        elif use_foot_sensors == "":
+        elif foot_sensors_type == "":
             self.got_foot_pressure = True
         else:
-            print(f"Problem: use foot sensors is {use_foot_sensors}")
+            print(f"Problem: use foot sensors is {foot_sensors_type}")
             exit()
 
         urdf = URDF.from_xml_string(rospy.get_param('robot_description'))
@@ -140,6 +140,7 @@ class ExecuteEnv(WolfgangBulletEnv):
 
         # see that we got all data from the various subscribers
         while self.current_joint_positions is None or self.ang_vel is None or not self.got_foot_pressure:
+            rospy.loginfo_throttle(10, "Waiting for data from subscribers")
             time.sleep(1)
 
     def apply_action(self, action):
@@ -164,7 +165,6 @@ class ExecuteEnv(WolfgangBulletEnv):
             else:
                 msg.positions = self.robot.joints_scaled_to_radiant(action)
             self.joint_publisher.publish(msg)
-            self.publish(action)
 
     def compute_observation(self):
         # save current state as previous state
@@ -177,7 +177,8 @@ class ExecuteEnv(WolfgangBulletEnv):
         self.robot.imu_rpy = self.imu_rpy
         self.robot.joint_positions = self.current_joint_positions
         if not self.cartesian_state:
-            self.robot.set_joint_pos_vel(self.current_joint_positions, self.current_joint_velocities)
+            self.robot.joint_positions = self.current_joint_positions
+            self.robot.joint_velocities = self.current_joint_velocities
         if self.cartesian_state:
             self.robot.solve_fk(force=True)
             if self.robot.previous_left_foot_pos is None:
@@ -262,6 +263,25 @@ class ExecuteEnv(WolfgangBulletEnv):
                 self.current_joint_positions[index] = msg.position[i]
                 self.current_joint_velocities[index] = msg.velocity[i]
 
+    def run_node(self, model, venv):
+        rate = self.step_freq
+        r = rospy.Rate(rate)
+        state = None
+        # start main loop
+        while not rospy.is_shutdown():
+            obs = self.compute_observation()
+            if obs is None:
+                continue
+            # we need to normalize the observation
+            norm_obs = venv.normalize_obs(obs)
+            action, state = model.predict(norm_obs, state=state, deterministic=True)
+            self.apply_action(action)
+
+            try:
+                r.sleep()
+            except:
+                # ignore errors from moving backwards in time
+                pass
 
 class StoreDict(argparse.Action):
     """
@@ -486,21 +506,6 @@ if __name__ == '__main__':
     }
     model = ALGOS[algo].load(model_path, env=venv, custom_objects=custom_objects)
 
-    rate = env.step_freq
-    r = rospy.Rate(rate)
-    state = None
-    # start main loop
-    while not rospy.is_shutdown():
-        obs = env.compute_observation()
-        if obs is None:
-            continue
-        # we need to normalize the observation
-        norm_obs = venv.normalize_obs(obs)
-        action, state = model.predict(norm_obs, state=state, deterministic=True)
-        env.apply_action(action)
+    env.run_node()
 
-        try:
-            r.sleep()
-        except:
-            # ignore errors from moving backwards in time
-            pass
+

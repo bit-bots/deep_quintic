@@ -200,8 +200,14 @@ class JointSpaceState(BaseState):
 
     def get_state_entries(self, scaled):
         output = super(JointSpaceState, self).get_state_entries(scaled)
-        joint_positions, joint_velocities, joint_torrques = self.env.sim.get_joint_values(
-            self.env.robot.used_joint_names, scaled, self.env.robot.robot_index)
+        if self.env.robot.joint_positions is None:
+            # we are running in simulation, get the values
+            joint_positions, joint_velocities, joint_torques = self.env.sim.get_joint_values(
+                self.env.robot.used_joint_names, scaled, self.env.robot.robot_index)
+        else:
+            # values have been provided by ROS
+            joint_positions = self.env.robot.joint_positions
+            joint_velocities = self.env.robot.joint_velocities
         output["joint_positions"] = joint_positions
         if self.leg_vel_in_state:
             output["joint_velocities"] = joint_velocities

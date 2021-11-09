@@ -31,7 +31,7 @@ from transforms3d.euler import quat2euler, mat2euler, euler2mat, euler2quat
 from transforms3d.quaternions import quat2mat
 from urdf_parser_py.urdf import URDF
 
-from deep_quintic import WolfgangBulletEnv
+from deep_quintic import WolfgangWalkEnv
 from deep_quintic.robot import Robot
 from deep_quintic.state import CartesianState, BaseState
 from deep_quintic.utils import Rot, compute_ik
@@ -67,7 +67,7 @@ class DummyPressureSensor:
             exit()
 
 
-class ExecuteEnv(WolfgangBulletEnv):
+class ExecuteEnv(WolfgangWalkEnv):
     def __init__(self, simulator_type="pybullet", reward_function=CartesianActionReward, step_freq=30, ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,

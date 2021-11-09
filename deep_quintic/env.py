@@ -119,7 +119,7 @@ class DeepQuinticEnv(gym.Env):
         self.env_timestep = 1 / step_freq
         # ep_length_in_s is in seconds, compute how many steps this is
         self.max_episode_steps = ep_length_in_s * step_freq
-        WolfgangBulletEnv.metadata['video.frames_per_second'] = step_freq
+        DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
 
         # Instantiating Simulation
         if simulator_type == "webots":
@@ -549,7 +549,7 @@ def cmd_vel_to_twist(cmd_vel, stop=False):
     return cmd_vel_msg
 
 
-class WolfgangBulletEnv(DeepQuinticEnv):
+class WolfgangWalkEnv(DeepQuinticEnv):
 
     def __init__(self, simulator_type="pybullet", reward_function=CartesianActionReward, step_freq=30, ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,

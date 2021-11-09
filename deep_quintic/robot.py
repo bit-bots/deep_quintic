@@ -85,8 +85,8 @@ class Robot:
         # how the foot pos and rpy are scaled. from [-1:1] action to meaningful m or rad
         # foot goal is relative to the start of the leg, so that 0 would be the center of possible poses
         # x, y, z, roll, pitch, yaw
-        self.cartesian_limits_left = [(-0.3, 0.3), (-0.05, 0.3), (-0.44, -0.14), (-math.tau / 8, math.tau / 8),
-                                      (-math.tau / 8, math.tau / 8), (-math.tau / 4, math.tau / 4)]
+        self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
+                                      (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
         # right is same just y pos is inverted
         self.cartesian_limits_right = self.cartesian_limits_left.copy()
         self.cartesian_limits_right[1] = (-self.cartesian_limits_left[1][1], -self.cartesian_limits_left[1][0])

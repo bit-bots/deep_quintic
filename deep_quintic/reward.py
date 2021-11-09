@@ -335,7 +335,7 @@ class ActionNotPossibleReward(AbstractReward):
 
 
 class IKErrorReward(AbstractReward):
-    def __init__(self, env: "DeepQuinticEnv", factor=1):
+    def __init__(self, env: "DeepQuinticEnv", factor=1000):
         super().__init__(env)
         self.factor = factor
 

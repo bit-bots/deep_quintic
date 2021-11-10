@@ -161,7 +161,10 @@ class DeepQuinticEnv(gym.Env):
                 print("### Start roscore! ###")
                 exit(1)
             # load walking params
-            load_yaml_to_param(self.namespace, "bitbots_quintic_walk", "/config/deep_quintic.yaml", rospack)
+            sim_name = simulator_type
+            if sim_name == "webots_extern":
+                sim_name = "webots"
+            load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
             self.engine = WalkEngine(self.namespace)
         else:
             print("Warning: Neither trajectory nor engine provided")

@@ -309,8 +309,13 @@ class DeepQuinticEnv(gym.Env):
             self.refbot.solve_ik_exactly()
             # next
             self.refbot_compute_next_step(reset=True)
+            # hacky since terrain >1 represents different type of terrain
+            if self.terrain_height > 1:
+                reset_terrain_height = self.terrain_height -1
+            else:
+                reset_terrain_height = self.terrain_height
             # set robot to initial pose
-            self.robot.reset_to_reference(self.refbot, self.randomize, self.terrain_height +0.02)
+            self.robot.reset_to_reference(self.refbot, self.randomize, reset_terrain_height +0.02)
         else:
             # without trajectory we just go to init
             self.robot.reset()

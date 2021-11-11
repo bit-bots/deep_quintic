@@ -42,7 +42,7 @@ class DeepQuinticEnv(gym.Env):
     def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", used_joints="Legs",
                  step_freq=30, ros_debug=False, gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
-                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
+                 state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True) -> None:
         """
@@ -558,7 +558,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
     def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30, ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
-                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
+                 state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True):
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,

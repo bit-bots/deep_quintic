@@ -287,9 +287,10 @@ class DeepQuinticEnv(gym.Env):
                     self.current_command_speed[(direction + 1) % 2]))
 
             # set command vel based on GUI input if appropriate
-            gui_cmd_vel = self.sim.read_command_vel_from_gui()
-            if gui_cmd_vel is not None:
-                self.current_command_speed = gui_cmd_vel
+            if self.gui:
+                gui_cmd_vel = self.sim.read_command_vel_from_gui()
+                if gui_cmd_vel is not None:
+                    self.current_command_speed = gui_cmd_vel
             engine_state = "WALKING"  # IDLE, WALKING, START_STEP, STOP_STEP, START_MOVEMENT, STOP_MOVEMENT, PAUSED, KICK
             phase = random.uniform()
             # reset the engine to specific start values

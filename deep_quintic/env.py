@@ -44,7 +44,7 @@ class DeepQuinticEnv(gym.Env):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True) -> None:
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -71,6 +71,7 @@ class DeepQuinticEnv(gym.Env):
         self.randomize = randomize
         self.use_complementary_filter = use_complementary_filter
         self.random_head_movement = random_head_movement
+        self.adaptive_phase = adaptive_phase
         self.leg_vel_in_state = leg_vel_in_state
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
@@ -565,7 +566,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True):
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False):
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -575,4 +576,5 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
                                 terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                                 phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
-                                use_complementary_filter=use_complementary_filter, random_head_movement=random_head_movement)
+                                use_complementary_filter=use_complementary_filter, random_head_movement=random_head_movement,
+                                adaptive_phase=adaptive_phase)

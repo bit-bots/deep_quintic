@@ -361,7 +361,7 @@ class IKErrorReward(AbstractReward):
         fk_action = self.env.robot.scale_pose_to_action(fk_left_foot_pos, fk_left_foot_rpy, fk_right_foot_pos,
                                                         fk_right_foot_rpy, self.env.rot_type)
 
-        action_diff = np.linalg.norm(np.array(self.env.last_action) - fk_action)
+        action_diff = np.linalg.norm(np.array(self.env.last_leg_action) - fk_action)
         return math.exp(-self.factor * (action_diff ** 2))
 
 
@@ -475,7 +475,7 @@ class FootActionReward(AbstractReward):
                                                              quat2euler(self.env.refbot.previous_right_foot_quat),
                                                              self.env.rot_type)
 
-        action_diff = np.linalg.norm(np.array(self.env.last_action) - ref_action)
+        action_diff = np.linalg.norm(np.array(self.env.last_leg_action) - ref_action)
         return math.exp(-self.factor * (action_diff ** 2))
 
 
@@ -494,7 +494,7 @@ class FootPositionActionReward(AbstractReward):
                                                          self.env.rot_type)
         # only take translation part
         ref_action = np.concatenate([ref_action[:3], ref_action[6:9]])
-        action = np.concatenate([self.env.last_action[:3], self.env.last_action[6:9]])
+        action = np.concatenate([self.env.last_leg_action[:3], self.env.last_leg_action[6:9]])
         action_diff = np.linalg.norm(action - ref_action)
         return math.exp(-self.factor * (action_diff ** 2))
 
@@ -514,7 +514,7 @@ class FootOrientationActionReward(AbstractReward):
                                                          self.env.rot_type)
         # only take translation part
         ref_action = np.concatenate([ref_action[3:6], ref_action[9:12]])
-        action = np.concatenate([self.env.last_action[3:6], self.env.last_action[9:12]])
+        action = np.concatenate([self.env.last_leg_action[3:6], self.env.last_leg_action[9:12]])
         action_diff = np.linalg.norm(action - ref_action)
         return math.exp(-self.factor * (action_diff ** 2))
 
@@ -572,7 +572,7 @@ class JointPositionActionReward(AbstractReward):
         if self.env.cartesian_action:
             print("DeepMimicActionReward does not work with cartesian action")
             exit(0)
-        elif self.env.last_action is None:
+        elif self.env.last_leg_action is None:
             # necessary to survive env_check()
             print("env check")
             return 0
@@ -581,9 +581,9 @@ class JointPositionActionReward(AbstractReward):
             if self.env.relative:
                 # if we do relative actions, we need to add the action to the positions of the joints at that time
                 action = self.env.robot.joints_radiant_to_scaled(
-                    self.env.robot.joint_positions + self.env.relative_scaling_joint_action * self.env.last_action)
+                    self.env.robot.joint_positions + self.env.relative_scaling_joint_action * self.env.last_leg_action)
             else:
-                action = self.env.last_action
+                action = self.env.last_leg_action
             action_diff = np.linalg.norm(scaled_ref_positions - action)
             reward = math.exp(-self.factor * action_diff ** 2)
             return reward

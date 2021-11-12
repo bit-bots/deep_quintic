@@ -498,14 +498,15 @@ class Robot:
                 r_sole = result.pose_stamped[result.fk_link_names.index('r_sole')].pose
                 r_rpy = quat2euler(
                     (r_sole.orientation.w, r_sole.orientation.x, r_sole.orientation.y, r_sole.orientation.z))
-                action = self.scale_pose_to_action([l_sole.position.x, l_sole.position.y, l_sole.position.z], l_rpy,
-                                                   [r_sole.position.x, r_sole.position.y, r_sole.position.z], r_rpy,
-                                                   rot_type)
+                mu_values = self.scale_pose_to_action([l_sole.position.x, l_sole.position.y, l_sole.position.z], l_rpy,
+                                                      [r_sole.position.x, r_sole.position.y, r_sole.position.z], r_rpy,
+                                                      rot_type)
             else:
                 # compute from reference
-                action = self.scale_pose_to_action(refbot.left_foot_pos, quat2euler(refbot.left_foot_quat),
-                                                   refbot.right_foot_pos, quat2euler(refbot.right_foot_quat), rot_type)
-            return action
+                mu_values = self.scale_pose_to_action(refbot.left_foot_pos, quat2euler(refbot.left_foot_quat),
+                                                      refbot.right_foot_pos, quat2euler(refbot.right_foot_quat),
+                                                      rot_type)
+            return mu_values
         else:
             mu_values = []
             if False:

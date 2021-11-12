@@ -1,3 +1,5 @@
+import math
+
 import rospy
 import numpy as np
 from bitbots_msgs.msg import FootPressure
@@ -44,7 +46,8 @@ class DeepQuinticEnv(gym.Env):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False) -> None:
+                 randomize=False, use_complementary_filter=True, random_head_movement=True,
+                 adaptive_phase=False) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -98,6 +101,7 @@ class DeepQuinticEnv(gym.Env):
         }
 
         self.last_action = None
+        self.last_leg_action = None
         self.step_count = 0
         self.start_frame = 0
         self.episode_start_time = 0
@@ -167,6 +171,7 @@ class DeepQuinticEnv(gym.Env):
                 sim_name = "webots"
             load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
             self.engine = WalkEngine(self.namespace)
+            self.engine_freq = self.engine.get_freq()
         else:
             print("Warning: Neither trajectory nor engine provided")
 
@@ -181,6 +186,10 @@ class DeepQuinticEnv(gym.Env):
         else:
             # actions are bound between their joint position limits and represented between -1 and 1
             self.num_actions = self.robot.num_used_joints
+        if self.adaptive_phase:
+            # additional action for timestep
+            self.num_actions += 1
+
         if self.state_type == "phase":
             self.state = PhaseState(self)
         elif self.state_type == "base":
@@ -312,11 +321,11 @@ class DeepQuinticEnv(gym.Env):
             self.refbot_compute_next_step(reset=True)
             # hacky since terrain >1 represents different type of terrain
             if self.terrain_height > 1:
-                reset_terrain_height = self.terrain_height -1
+                reset_terrain_height = self.terrain_height - 1
             else:
                 reset_terrain_height = self.terrain_height
             # set robot to initial pose
-            self.robot.reset_to_reference(self.refbot, self.randomize, reset_terrain_height +0.02)
+            self.robot.reset_to_reference(self.refbot, self.randomize, reset_terrain_height + 0.02)
         else:
             # without trajectory we just go to init
             self.robot.reset()
@@ -454,13 +463,18 @@ class DeepQuinticEnv(gym.Env):
         if False:
             action = self.action_space.sample()
         if False:
-            action = np.array([0] * self.num_actions)
+            action = np.array([-1] * self.num_actions)
 
         # handle Infs and NaNs
         action_finit = np.isfinite(action).all()
 
         # save action as class variable since we may need it to compute reward
         self.last_action = action
+        if self.adaptive_phase:
+            self.last_leg_action = action[:-1]
+        else:
+            self.last_leg_action = action
+
         if action_finit:
             # filter action
             if self.filter_actions:
@@ -483,7 +497,17 @@ class DeepQuinticEnv(gym.Env):
         if self.engine is not None:
             # step the refbot and compute the next goals
             self.refbot.step()
-            self.refbot_compute_next_step()
+            if self.adaptive_phase:
+                # compute timestep from networks action. scaled to [0, single_step_time]
+                time_of_single_step = 0.5 / self.engine_freq
+                timestep = (action[-1] + 1) / 2 * time_of_single_step
+                if timestep == 0:
+                    # walk engine will not accept exactly zero. hacky way to avoid this
+                    timestep = 0.000000001
+            else:
+                # use fixed timestep
+                timestep = None
+            self.refbot_compute_next_step(timestep=timestep)
         self.step_count += 1
         # compute reward
         if action_finit:
@@ -527,7 +551,12 @@ class DeepQuinticEnv(gym.Env):
             self.refbot_compute_next_step(0.0001)
             self.refbot.step()
             self.refbot.solve_ik_exactly()
-            return self.robot.get_init_mu(self.cartesian_action, self.rot_type, self.refbot)
+            action_mu = self.robot.get_init_mu(self.cartesian_action, self.rot_type, self.refbot)
+            if self.adaptive_phase:
+                # just use the normal fixed timestep as initial value for the timestep but scale it to [-1, 1]
+                time_of_single_step = 0.5 / self.engine_freq
+                action_mu.append((self.env_timestep/time_of_single_step) *2 - 1)
+            return action_mu
 
     def _seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
@@ -561,7 +590,8 @@ def cmd_vel_to_twist(cmd_vel, stop=False):
 
 class WolfgangWalkEnv(DeepQuinticEnv):
 
-    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30, ros_debug=False,
+    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30,
+                 ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
@@ -576,5 +606,6 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
                                 terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                                 phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
-                                use_complementary_filter=use_complementary_filter, random_head_movement=random_head_movement,
+                                use_complementary_filter=use_complementary_filter,
+                                random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase)

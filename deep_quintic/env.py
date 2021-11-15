@@ -127,12 +127,16 @@ class DeepQuinticEnv(gym.Env):
         DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
 
         # Instantiating Simulation
-        if simulator_type == "webots":
-            self.sim = WebotsSim(self.gui, start_webots=True)
-        elif simulator_type == "webots_extern":
-            self.sim = WebotsSim(self.gui)
+        if "_off" in simulator_type:
+            simulator_type = simulator_type[:-4]
+            self.sim = None
         else:
-            self.sim = PybulletSim(self.gui, self.terrain_height)
+            if simulator_type == "webots":
+                self.sim = WebotsSim(self.gui, start_webots=True)
+            elif simulator_type == "webots_extern":
+                self.sim = WebotsSim(self.gui)
+            elif simulator_type == "pybullet":
+                self.sim = PybulletSim(self.gui, self.terrain_height)
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (

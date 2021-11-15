@@ -74,7 +74,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True):
-        super().__init__(simulator_type=simulator_type, reward_function=reward_function, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
+        super().__init__(simulator_type=simulator_type+"_off", reward_function=reward_function, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                          use_engine=use_engine, cartesian_state=cartesian_state,
                          cartesian_action=cartesian_action, relative=relative,
@@ -91,7 +91,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.refbot.phase = 0
         self.last_time = None
         rospack = rospkg.RosPack()
-        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", "/config/deep_quintic.yaml", rospack)
+        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml", rospack)
         self.freq = rosparam.get_param("/walking/engine/freq")
 
         # todo we dont initilize action filter correctly. history is empty

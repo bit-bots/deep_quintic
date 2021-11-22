@@ -609,3 +609,24 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase)
+
+
+class WolfgangDynupEnv(DeepQuinticEnv):
+    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30,
+                 ros_debug=False,
+                 gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
+                 cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
+                 state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
+                 foot_sensors_type="", use_rt_in_state=False, randomize=False, use_complementary_filter=True,
+                 random_head_movement=True, adaptive_phase=False):
+        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
+                                used_joints="All", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
+                                trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
+                                use_engine=use_engine, cartesian_state=cartesian_state,
+                                cartesian_action=cartesian_action, relative=relative,
+                                use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
+                                use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
+                                terrain_height=terrain_height, foot_sensors_type=foot_sensors_type, randomize=randomize,
+                                use_complementary_filter=use_complementary_filter,
+                                random_head_movement=random_head_movement, adaptive_phase=adaptive_phase)
+        

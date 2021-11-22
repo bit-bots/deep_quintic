@@ -9,7 +9,7 @@ import numpy as np
 import rospkg
 import rospy
 import transforms3d.axangles
-from controller import Keyboard
+from pynput import keyboard
 from nav_msgs.msg import Odometry
 from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
 from wolfgang_pybullet_sim.simulation import Simulation
@@ -414,7 +414,7 @@ class WebotsSim(SupervisorController, AbstractSim):
         if key == ord('T'):
             self.alpha -= 0.05
             self.alpha = max(0, self.alpha)
-        elif key == Keyboard.SHIFT + ord('T'):
+        elif key == keyboard.Key.shift + ord('T'):
             self.alpha += 0.05
             self.alpha = min(1, self.alpha)
         elif key == ord('F'):

@@ -1,4 +1,5 @@
 from bitbots_quintic_walk import PyWalk
+from bitbots_dynup import PyDynup
 
 
 class AbstractEngine:
@@ -27,3 +28,10 @@ class WalkEngine(PyWalk, AbstractEngine):
     def __init__(self, namespace):
         AbstractEngine.__init__(self, namespace)
         PyWalk.__init__(self, namespace)
+
+
+class DynupEngine(PyDynup, AbstractEngine):
+
+    def __init__(self, namespace):
+        AbstractEngine.__init__(self, namespace)
+        PyDynup.__init__(self, namespace)

@@ -74,15 +74,18 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True):
-        super().__init__(simulator_type=simulator_type, reward_function=reward_function, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
-                         trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
-                         use_engine=use_engine, cartesian_state=cartesian_state,
-                         cartesian_action=cartesian_action, relative=relative,
-                         use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
-                         use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
-                         terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
-                         phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
-                         use_complementary_filter=False, random_head_movement=False)
+        WolfgangWalkEnv().__init__(simulator_type=simulator_type, reward_function=reward_function, step_freq=step_freq,
+                                   ros_debug=ros_debug, gui=gui,
+                                   trajectory_file=trajectory_file, state_type=state_type,
+                                   ep_length_in_s=ep_length_in_s, use_engine=use_engine,
+                                   cartesian_state=cartesian_state, cartesian_action=cartesian_action,
+                                   relative=relative, use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase,
+                                   rot_type=rot_type, use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
+                                   terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
+                                   phase_in_state=phase_in_state, randomize=randomize,
+                                   leg_vel_in_state=leg_vel_in_state, use_complementary_filter=use_complementary_filter,
+                                   random_head_movement=random_head_movement)
+
         rospy.init_node("rl_walk")
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())

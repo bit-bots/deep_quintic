@@ -158,11 +158,11 @@ class DeepQuinticEnv(gym.Env):
         self.trajectory = None
         self.engine = None
         self.current_command_speed = [0, 0, 0]
+        self.namespace = ""
         if trajectory_file is not None:
             self.trajectory = Trajectory()
             self.trajectory.load_from_json(trajectory_file)
         elif use_engine:
-            self.namespace = ""
             # load robot model to ROS
             try:
                 rospack = rospkg.RosPack()

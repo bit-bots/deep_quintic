@@ -4,6 +4,7 @@ import time
 
 import rosparam
 import rospkg
+from humanoid_league_msgs.msg import RobotControlState
 
 import deep_quintic
 import argparse
@@ -74,9 +75,10 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True):
-        super().__init__(simulator_type=simulator_type+"_off", reward_function=reward_function, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
+        super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
+                         ros_debug=ros_debug, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
-                         use_engine=use_engine, cartesian_state=cartesian_state,
+                         use_engine=False, cartesian_state=cartesian_state,
                          cartesian_action=cartesian_action, relative=relative,
                          use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
                          use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
@@ -91,7 +93,8 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.refbot.phase = 0
         self.last_time = None
         rospack = rospkg.RosPack()
-        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml", rospack)
+        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml",
+                           rospack)
         self.freq = rosparam.get_param("/walking/engine/freq")
 
         # todo we dont initilize action filter correctly. history is empty
@@ -107,12 +110,14 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.got_stop_command = True
         self.performing_stop_step = False
         self.is_stopped = True
+        self.robot_state = RobotControlState.CONTROLLABLE
 
-        self.joint_publisher = rospy.Publisher('DynamixelController/command', JointCommand, queue_size=1)
+        self.joint_publisher = rospy.Publisher('walking_motor_goals', JointCommand, queue_size=1)
         self.current_command_speed_sub = rospy.Subscriber('cmd_vel', Twist, self.current_command_speed_cb,
                                                           queue_size=1)
         self.imu_sub = rospy.Subscriber('imu/data', Imu, self.imu_cb, queue_size=1)
         self.joint_state_sub = rospy.Subscriber('joint_states', JointState, self.joint_state_cb, queue_size=1)
+        self.robot_state_sub = rospy.Subscriber('robot_state', RobotControlState, self.robot_state_cb, queue_size=1)
         if foot_sensors_type == "filtered":
             self.left_pressure_sub = rospy.Subscriber('foot_pressure_left/filtered', FootPressure,
                                                       lambda msg: self.foot_pressure_cb(msg, True),
@@ -263,25 +268,35 @@ class ExecuteEnv(WolfgangWalkEnv):
                 self.current_joint_positions[index] = msg.position[i]
                 self.current_joint_velocities[index] = msg.velocity[i]
 
+    def robot_state_cb(self, msg: RobotControlState):
+        self.robot_state = msg.state
+
     def run_node(self, model, venv):
         rate = self.step_freq
         r = rospy.Rate(rate)
         state = None
         # start main loop
         while not rospy.is_shutdown():
-            obs = self.compute_observation()
-            if obs is None:
-                continue
-            # we need to normalize the observation
-            norm_obs = venv.normalize_obs(obs)
-            action, state = model.predict(norm_obs, state=state, deterministic=True)
-            self.apply_action(action)
-
+            if self.robot_state == RobotControlState.WALKING or (
+                    self.robot_state == RobotControlState.CONTROLLABLE and not self.current_command_speed == (0, 0, 0)):
+                # only run if we are in the correct state
+                obs = self.compute_observation()
+                if obs is None:
+                    continue
+                # we need to normalize the observation
+                norm_obs = venv.normalize_obs(obs)
+                action, state = model.predict(norm_obs, state=state, deterministic=True)
+                self.apply_action(action)
+            else:
+                # stop walking
+                self.current_command_speed = (0, 0, 0)
+                self.is_stopped = True
             try:
                 r.sleep()
             except:
                 # ignore errors from moving backwards in time
                 pass
+
 
 class StoreDict(argparse.Action):
     """
@@ -507,5 +522,3 @@ if __name__ == '__main__':
     model = ALGOS[algo].load(model_path, env=venv, custom_objects=custom_objects)
 
     env.run_node()
-
-

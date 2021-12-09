@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # necessary to register envs
+import math
 import time
 
 import rosparam
@@ -19,7 +20,7 @@ import actionlib
 import stable_baselines3
 import yaml
 from bitbots_moveit_bindings import get_position_fk
-from bitbots_msgs.msg import KickAction, JointCommand, FootPressure, KickGoal
+from bitbots_msgs.msg import KickAction, JointCommand, FootPressure, KickGoal, SupportState
 from geometry_msgs.msg import PoseStamped, Twist
 from moveit_msgs.srv import GetPositionFKRequest, GetPositionFKResponse
 from sb3_contrib import QRDQN, TQC
@@ -69,14 +70,15 @@ class DummyPressureSensor:
 
 
 class ExecuteEnv(WolfgangWalkEnv):
-    def __init__(self, simulator_type="pybullet", reward_function=CartesianActionReward, step_freq=30, ros_debug=False,
-                 gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
+    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30,
+                 ros_debug=False,
+                 gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=False,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
-                 state_type="full", cyclic_phase=True, rot_type=Rot.RPY, filter_actions=False, terrain_height=0,
-                 phase_in_state=True, foot_sensors_type="", leg_vel_in_state=True, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True):
+                 state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
+                 phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False):
         super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
-                         ros_debug=ros_debug, gui=gui,
+                         ros_debug=True, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                          use_engine=False, cartesian_state=cartesian_state,
                          cartesian_action=cartesian_action, relative=relative,
@@ -84,8 +86,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                          use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
                          terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                          phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
-                         use_complementary_filter=False, random_head_movement=False)
-        rospy.init_node("rl_walk")
+                         use_complementary_filter=False, random_head_movement=False, adaptive_phase=adaptive_phase)
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
 
@@ -113,6 +114,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.robot_state = RobotControlState.CONTROLLABLE
 
         self.joint_publisher = rospy.Publisher('walking_motor_goals', JointCommand, queue_size=1)
+        self.support_publisher = rospy.Publisher('walk_support_state', SupportState, queue_size=1)
         self.current_command_speed_sub = rospy.Subscriber('cmd_vel', Twist, self.current_command_speed_cb,
                                                           queue_size=1)
         self.imu_sub = rospy.Subscriber('imu/data', Imu, self.imu_cb, queue_size=1)
@@ -171,14 +173,23 @@ class ExecuteEnv(WolfgangWalkEnv):
                 msg.positions = self.robot.joints_scaled_to_radiant(action)
             self.joint_publisher.publish(msg)
 
+            # support state is necessary for odometry
+            msg = SupportState()
+            msg.header.stamp = rospy.Time.now()
+            if self.refbot.phase > 0.5:
+                msg.state = SupportState.LEFT
+            else:
+                msg.state = SupportState.RIGHT
+            # todo we are not detecting double support state
+            # msg.state = SupportState.DOUBLE
+            self.support_publisher.publish(msg)
+
     def compute_observation(self):
         # save current state as previous state
         self.robot.step()
 
-        # progress phase and compute current state
-        time = rospy.Time.now().to_sec()
-        self.progress_phase(time)
-        self.robot.ang_vel = self.ang_vel
+        # compute current state
+        self.robot.imu_ang_vel = self.ang_vel
         self.robot.imu_rpy = self.imu_rpy
         self.robot.joint_positions = self.current_joint_positions
         if not self.cartesian_state:
@@ -190,6 +201,9 @@ class ExecuteEnv(WolfgangWalkEnv):
                 # need to have two states updates first so that the previous positions are set for velocity computation
                 return None
         # calc velocities
+        time = rospy.Time.now().to_sec()
+        if self.last_time is None:
+            self.last_time = time - 0.001
         time_diff = time - self.last_time
         if time_diff == 0:
             time_diff = 1 / self.step_freq
@@ -203,19 +217,24 @@ class ExecuteEnv(WolfgangWalkEnv):
 
         return observation
 
-    def progress_phase(self, time):
-        if self.last_time is None:
-            # handle first iteration
-            dt = 0.001
+    def progress_phase(self, time, action):
+        if self.adaptive_phase:
+            # progress phase based on the policies action
+            time_of_single_step = 0.5 / self.freq
+            dt = (action[-1] + 1) / 2 * time_of_single_step
         else:
-            dt = time - self.last_time
-            if dt <= 0:
-                # handle edge case or sim time being resettled
+            if self.last_time is None:
+                # handle first iteration
                 dt = 0.001
-        self.last_time = time
+            else:
+                dt = time - self.last_time
+                if dt <= 0:
+                    # handle edge case or sim time being resettled
+                    dt = 0.001
+            self.last_time = time
 
         # Check for too long dt
-        if dt > 0.25 / self.freq:
+        if dt > 0.5 / self.freq:
             rospy.logerr(f"DeepQuintic error too long dt phase={self.refbot.phase} dt={dt}")
             return
 
@@ -246,6 +265,8 @@ class ExecuteEnv(WolfgangWalkEnv):
     def imu_cb(self, msg: Imu):
         self.imu_rpy = [*quat2euler((msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z))]
         self.ang_vel = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
+        # self.imu_rpy = [0,0,0]
+        # self.ang_vel = [0,0,0]
 
     def foot_pressure_cb(self, msg: FootPressure, is_left: bool):
         self.got_foot_pressure = True
@@ -278,7 +299,8 @@ class ExecuteEnv(WolfgangWalkEnv):
         # start main loop
         while not rospy.is_shutdown():
             if self.robot_state == RobotControlState.WALKING or (
-                    self.robot_state == RobotControlState.CONTROLLABLE and not self.current_command_speed == (0, 0, 0)):
+                    self.robot_state == RobotControlState.CONTROLLABLE and (
+                    not self.current_command_speed == (0, 0, 0) or not self.is_stopped)):
                 # only run if we are in the correct state
                 obs = self.compute_observation()
                 if obs is None:
@@ -286,11 +308,19 @@ class ExecuteEnv(WolfgangWalkEnv):
                 # we need to normalize the observation
                 norm_obs = venv.normalize_obs(obs)
                 action, state = model.predict(norm_obs, state=state, deterministic=True)
+                self.last_action = action
                 self.apply_action(action)
+                # progress phase and compute current state
+                time = rospy.Time.now().to_sec()
+                self.progress_phase(time, action)
+                self.ros_interface.publish_action()
             else:
-                # stop walking
+                # hard stop walking when falling, getting up, etc.
                 self.current_command_speed = (0, 0, 0)
                 self.is_stopped = True
+
+            self.state.publish_debug()
+
             try:
                 r.sleep()
             except:

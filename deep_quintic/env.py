@@ -41,13 +41,13 @@ class DeepQuinticEnv(gym.Env):
         'video.frames_per_second': 30
     }
 
-    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", used_joints="Legs",
+    def __init__(self, simulator_type="pybullet", motion_type="dynup", reward_function="CartesianActionVelReward", used_joints="Legs",
                  engine=None, step_freq=30, ros_debug=False, gui=False, trajectory_file=None, ep_length_in_s=10,
                  use_engine=True, cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
-                 adaptive_phase=False) -> None:
+                 adaptive_phase=False,) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -58,6 +58,7 @@ class DeepQuinticEnv(gym.Env):
         @param early_termination: if episode should be terminated early when robot falls
         """
         self.gui = gui
+        self.motion_type = motion_type
         self.ros_debug = ros_debug
         self.cartesian_state = cartesian_state
         self.cartesian_action = cartesian_action
@@ -171,7 +172,8 @@ class DeepQuinticEnv(gym.Env):
                 sim_name = "webots"
             load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
             self.engine = engine(self.namespace)
-            self.engine_freq = self.engine.get_freq()
+            if False:
+                self.engine_freq = self.engine.get_freq() #TODO
         else:
             print("Warning: Neither trajectory nor engine provided")
 
@@ -301,10 +303,14 @@ class DeepQuinticEnv(gym.Env):
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()
                 if gui_cmd_vel is not None:
                     self.current_command_speed = gui_cmd_vel
-            engine_state = "WALKING"  # IDLE, WALKING, START_STEP, STOP_STEP, START_MOVEMENT, STOP_MOVEMENT, PAUSED, KICK
-            phase = random.uniform()
-            # reset the engine to specific start values
-            self.engine.special_reset(engine_state, phase, cmd_vel_to_twist(self.current_command_speed), True)
+            if self.motion_type == "walk":
+                engine_state = "WALKING"  # IDLE, WALKING, START_STEP, STOP_STEP, START_MOVEMENT, STOP_MOVEMENT, PAUSED, KICK
+                phase = random.uniform()
+                # reset the engine to specific start values
+                self.engine.special_reset(engine_state, phase, cmd_vel_to_twist(self.current_command_speed), True)
+            elif self.motion_type == "dynup":
+                time = random.uniform() #TODO: make this the right length
+                self.engine.special_reset(time)
             # compute 3 times to set previous, current and next frame
             # previous
             self.refbot_compute_next_step(reset=True)
@@ -380,7 +386,10 @@ class DeepQuinticEnv(gym.Env):
             timestep = self.env_timestep
         # step the reference robot based on the engine
         if self.cartesian_state:
-            result = self.engine.step_open_loop(timestep, cmd_vel_to_twist(self.current_command_speed))
+            if self.motion_type == "walk":
+                result = self.engine.step_open_loop(timestep, cmd_vel_to_twist(self.current_command_speed))
+            elif self.motion_type == "dynup":
+                result = self.engine.step_open_loop(timestep)
         else:
             if reset:
                 imu_msg = Imu()
@@ -391,13 +400,17 @@ class DeepQuinticEnv(gym.Env):
                 imu_msg = self.robot.get_imu_msg()
                 left_pressure = self.robot.get_pressure(left=True, filtered=True, time=False)
                 right_pressure = self.robot.get_pressure(left=False, filtered=True, time=False)
-            result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
-                                      self.robot.get_joint_state_msg(), left_pressure, right_pressure)
-        phase = self.engine.get_phase()
-        odom_msg = self.engine.get_odom()
-        position = np.array(
+            if self.motion_type == "walk":
+                result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
+                                          self.robot.get_joint_state_msg(), left_pressure, right_pressure)
+            elif self.motion_type == "dynup":
+                result = self.engine.step(timestep, imu_msg, self.robot.get_joint_state_msg())
+        if self.motion_type == "walk":
+            phase = self.engine.get_phase()
+            odom_msg = self.engine.get_odom()
+            position = np.array(
             [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z])
-        orientation = np.array(
+            orientation = np.array(
             [odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y,
              odom_msg.pose.pose.orientation.z,
              ])
@@ -412,6 +425,7 @@ class DeepQuinticEnv(gym.Env):
             right_foot_quat = np.array(
                 [result.poses[1].orientation.w, result.poses[1].orientation.x, result.poses[1].orientation.y,
                  result.poses[1].orientation.z])
+
             self.refbot.set_next_step(time=self.time, phase=phase, position=position, orientation=orientation,
                                       robot_lin_vel=self.current_command_speed[:2] + [0],
                                       robot_ang_vel=[0, 0] + self.current_command_speed[2:2],
@@ -547,7 +561,10 @@ class DeepQuinticEnv(gym.Env):
             return self.num_actions * [0]
         else:
             # reset the engine to start of step and compute refbot accordingly
-            self.engine.special_reset("START_MOVEMENT", 0, cmd_vel_to_twist((0, 0, 0), True), True)
+            if self.motion_type == "walk":
+                self.engine.special_reset("START_MOVEMENT", 0, cmd_vel_to_twist((0, 0, 0), True), True)
+            elif self.motion_type == "dynup":
+                self.engine.special_reset(0)
             self.refbot_compute_next_step(0.0001)
             self.refbot.step()
             self.refbot.solve_ik_exactly()
@@ -597,7 +614,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False):
-        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
+        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, motion_type="walk", reward_function=reward_function,
                                 used_joints="Legs", engine=WalkEngine, step_freq=step_freq, ros_debug=ros_debug,
                                 gui=gui, trajectory_file=trajectory_file, state_type=state_type,
                                 ep_length_in_s=ep_length_in_s, use_engine=use_engine, cartesian_state=cartesian_state,
@@ -619,7 +636,7 @@ class WolfgangDynupEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  foot_sensors_type="", use_rt_in_state=False, randomize=False, use_complementary_filter=True,
                  random_head_movement=True, adaptive_phase=False):
-        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
+        DeepQuinticEnv.__init__(self, simulator_type=simulator_type, motion_type="dynup", reward_function=reward_function,
                                 used_joints="All", engine=DynupEngine, step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                                 use_engine=use_engine, cartesian_state=cartesian_state,

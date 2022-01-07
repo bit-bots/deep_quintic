@@ -47,7 +47,7 @@ class DeepQuinticEnv(gym.Env):
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
-                 adaptive_phase=False, random_force=False) -> None:
+                 adaptive_phase=False, random_force=False, use_gyro=True) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -77,6 +77,8 @@ class DeepQuinticEnv(gym.Env):
         self.adaptive_phase = adaptive_phase
         self.random_force = random_force
         self.leg_vel_in_state = leg_vel_in_state
+        self.use_gyro = use_gyro
+
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
                          'fused': Rot.FUSED,
@@ -520,14 +522,6 @@ class DeepQuinticEnv(gym.Env):
         else:
             reward = 0
 
-        dead = not self.action_possible or not self.robot.is_alive()
-        done = dead or self.step_count >= self.max_episode_steps - 1
-        info = dict()
-        if done:
-            # write custom episode info with key that does not get overwritten by monitor
-            info["rewards"] = self.reward_function.get_info_dict()
-            info["is_success"] = not dead
-
         if self.ros_debug:
             self.ros_interface.publish()
         self.handle_gui()
@@ -545,6 +539,19 @@ class DeepQuinticEnv(gym.Env):
         #    raise AssertionError
         # if not np.isfinite(reward).all():
         #    raise AssertionError
+
+        dead = not self.action_possible or not self.robot.is_alive()
+        done = dead or self.step_count >= self.max_episode_steps - 1
+        info = dict()
+        if done:
+            # write custom episode info with key that does not get overwritten by monitor
+            info["rewards"] = self.reward_function.get_info_dict()
+            info["is_success"] = not dead
+            if not dead:
+                # write some information that shows stable-baselines that this was ended due to a timelimit
+                # so that the bootstrapping is correctly performed
+                info["terminal_observation"] = obs
+                info["TimeLimit.truncated"] = True
         return obs, reward, bool(done), info
 
     def get_action_biases(self):
@@ -601,7 +608,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False, random_force=False):
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False, random_force=False, use_gyro=True):
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -613,4 +620,4 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
-                                adaptive_phase=adaptive_phase, random_force=random_force)
+                                adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro)

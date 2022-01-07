@@ -9,7 +9,11 @@ import numpy as np
 import rospkg
 import rospy
 import transforms3d.axangles
-from controller import Keyboard
+try:
+    #this import is from webots not from the controller python package. if the controller package is installed it will also fail!
+    from controller import Keyboard
+except:
+    print("Keyboard package from webots not found. Only pybullet sim will work")
 from nav_msgs.msg import Odometry
 from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
 from wolfgang_pybullet_sim.simulation import Simulation
@@ -19,6 +23,9 @@ from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
 except:
+    class SupervisorController:
+        def __init__(self):
+            pass
     rospy.logerr("Could not load webots sim. If you want to use it, source the setenvs.sh")
 
 
@@ -313,7 +320,7 @@ class WebotsSim(SupervisorController, AbstractSim):
 
     def reset_base_position_and_orientation(self, pos, quat, robot_index=1):
         quat = wxyz2xyzw(quat)
-        self.reset_robot_pose(pos, quat, robot_index)
+        self.reset_robot_pose(pos, quat, name=robot_index)
 
     def reset_base_velocity(self, lin_vel, ang_vel, robot_index=1):
         self.robot_nodes[robot_index].setVelocity([*lin_vel, *ang_vel])

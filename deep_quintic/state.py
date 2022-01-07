@@ -97,13 +97,14 @@ class BaseState(PhaseState):
             print("ROTATION NOT KNOWN")
             exit()
 
-        ang_vel = deepcopy(self.env.robot.imu_ang_vel)
-        if self.randomize:
-            for i in range(3):
-                ang_vel[i] = random.gauss(ang_vel[i], 0.2)
-        if scaled:
-            ang_vel = ang_vel / np.array(20)
-        output["ang_vel"] = ang_vel
+        if self.env.use_gyro:
+            ang_vel = deepcopy(self.env.robot.imu_ang_vel)
+            if self.randomize:
+                for i in range(3):
+                    ang_vel[i] = random.gauss(ang_vel[i], 0.2)
+            if scaled:
+                ang_vel = ang_vel / np.array(20)
+            output["ang_vel"] = ang_vel
 
         if self.use_foot_sensors != "":
             foot_pressures = self.get_pressure_array(self.use_foot_sensors)

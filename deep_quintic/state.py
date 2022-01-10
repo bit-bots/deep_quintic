@@ -71,31 +71,32 @@ class BaseState(PhaseState):
         output = super(BaseState, self).get_state_entries(scaled)
         # it only makes sense to display IMU rot in fused or RPY since we do not have yaw direction
         # todo they are all originally computed from euler. can this lead to problems?
-        rpy = deepcopy(self.env.robot.imu_rpy)
-        if self.randomize and len(rpy) == 3:
-            for i in range(3):
-                rpy[i] = random.gauss(rpy[i], 0.05)
-        if self.env.rot_type == Rot.RPY:
-            roll = rpy[0]
-            pitch = rpy[1]
-            output["roll"] = [roll / (math.tau / 4)] if scaled else [roll]
-            output["pitch"] = [pitch / (math.tau / 4)] if scaled else [pitch]
-        elif self.env.rot_type == Rot.FUSED:
-            quat = euler2quat(*rpy, axes='sxyz')
-            fused_roll, fused_pitch, fused_yaw, hemi = quat2fused(quat)
-            roll = fused_roll
-            pitch = fused_pitch
-            output["roll"] = [roll / (math.tau / 4)] if scaled else [roll]
-            output["pitch"] = [pitch / (math.tau / 4)] if scaled else [pitch]
-        elif self.env.rot_type == Rot.QUAT:
-            # quat is scaled from -1 to 1
-            output["quat"] = euler2quat(*rpy, axes='sxyz')
-        elif self.env.rot_type == Rot.SIXD:
-            # is already scaled from -1 to 1
-            output["sixd"] = quat2sixd(euler2quat(*rpy, axes='sxyz'))
-        else:
-            print("ROTATION NOT KNOWN")
-            exit()
+        if self.env.use_imu_orientation:
+            rpy = deepcopy(self.env.robot.imu_rpy)
+            if self.randomize and len(rpy) == 3:
+                for i in range(3):
+                    rpy[i] = random.gauss(rpy[i], 0.05)
+            if self.env.rot_type == Rot.RPY:
+                roll = rpy[0]
+                pitch = rpy[1]
+                output["roll"] = [roll / (math.tau / 4)] if scaled else [roll]
+                output["pitch"] = [pitch / (math.tau / 4)] if scaled else [pitch]
+            elif self.env.rot_type == Rot.FUSED:
+                quat = euler2quat(*rpy, axes='sxyz')
+                fused_roll, fused_pitch, fused_yaw, hemi = quat2fused(quat)
+                roll = fused_roll
+                pitch = fused_pitch
+                output["roll"] = [roll / (math.tau / 4)] if scaled else [roll]
+                output["pitch"] = [pitch / (math.tau / 4)] if scaled else [pitch]
+            elif self.env.rot_type == Rot.QUAT:
+                # quat is scaled from -1 to 1
+                output["quat"] = euler2quat(*rpy, axes='sxyz')
+            elif self.env.rot_type == Rot.SIXD:
+                # is already scaled from -1 to 1
+                output["sixd"] = quat2sixd(euler2quat(*rpy, axes='sxyz'))
+            else:
+                print("ROTATION NOT KNOWN")
+                exit()
 
         if self.env.use_gyro:
             ang_vel = deepcopy(self.env.robot.imu_ang_vel)

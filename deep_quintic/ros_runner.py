@@ -180,7 +180,6 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.robot.imu_rpy = self.imu_rpy
         self.robot.joint_positions = self.current_joint_positions
         if not self.cartesian_state:
-            self.robot.joint_positions = self.current_joint_positions
             self.robot.joint_velocities = self.current_joint_velocities
         if self.cartesian_state:
             self.robot.solve_fk(force=True)

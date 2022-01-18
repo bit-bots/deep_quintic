@@ -276,7 +276,6 @@ class DeepQuinticEnv(gym.Env):
                                  self.domain_rand_bounds["rolling_friction"])
 
     def reset(self):
-        print("reset")
         if self.gui:
             # reset refbot
             self.sim.reset_joints_to_init_pos(self.refbot.robot_index)

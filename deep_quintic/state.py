@@ -126,8 +126,7 @@ class BaseState(PhaseState):
                         quat2euler(self.env.refbot.next_right_foot_quat),
                         self.env.rot_type)
                 else:
-                    print("not implemented")
-                    exit()
+                    raise NotImplementedError
 
         return output
 
@@ -212,6 +211,7 @@ class JointSpaceState(BaseState):
         if self.leg_vel_in_state:
             output["joint_velocities"] = joint_velocities
         for key, value in output.items():
-            if np.min(value) < -1 or np.max(value) > 1:
-                print(f"Value for {key} was {value}")
+            if value[0] is not None:
+                if np.min(value) < -1 or np.max(value) > 1:
+                    print(f"Value for {key} was {value}")
         return output

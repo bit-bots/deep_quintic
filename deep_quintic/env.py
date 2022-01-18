@@ -170,7 +170,11 @@ class DeepQuinticEnv(gym.Env):
             sim_name = simulator_type
             if sim_name == "webots_extern":
                 sim_name = "webots"
-            load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
+            if self.motion_type == "walk":
+                load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml",
+                                   rospack)
+            elif self.motion_type == "dynup":
+                load_yaml_to_param(self.namespace, "bitbots_dynup", f"/config/dynup_sim.yaml", rospack) #TODO?
             self.engine = engine(self.namespace)
             if False:
                 self.engine_freq = self.engine.get_freq() #TODO
@@ -185,6 +189,8 @@ class DeepQuinticEnv(gym.Env):
                 self.num_actions = 14
             elif self.rot_type == Rot.SIXD:
                 self.num_actions = 18
+            if self.motion_type == "dynup":
+                self.num_actions *= 2  # dynup also has both arms
         else:
             # actions are bound between their joint position limits and represented between -1 and 1
             self.num_actions = self.robot.num_used_joints
@@ -270,6 +276,7 @@ class DeepQuinticEnv(gym.Env):
                                  self.domain_rand_bounds["rolling_friction"])
 
     def reset(self):
+        print("reset")
         if self.gui:
             # reset refbot
             self.sim.reset_joints_to_init_pos(self.refbot.robot_index)
@@ -414,6 +421,11 @@ class DeepQuinticEnv(gym.Env):
             [odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y,
              odom_msg.pose.pose.orientation.z,
              ])
+        else:
+            # Get ground truth if no odometry is available.
+            pose = self.sim.get_robot_pose()
+            position = list(pose[0])
+            orientation = list(pose[1])
         if self.cartesian_state:
             left_foot_pos = np.array(
                 [result.poses[0].position.x, result.poses[0].position.y, result.poses[0].position.z])
@@ -441,10 +453,16 @@ class DeepQuinticEnv(gym.Env):
             for i in range(self.robot.num_used_joints):
                 index = self.robot.joint_indexes[result.joint_names[i]]
                 joint_positions[index] = result.positions[i]
-            self.refbot.set_next_step(time=self.time, phase=phase, position=position, orientation=orientation,
-                                      robot_lin_vel=self.current_command_speed[:2] + [0],
-                                      robot_ang_vel=[0, 0] + self.current_command_speed[2:2],
-                                      joint_positions=joint_positions)
+            if self.motion_type == "walk":
+                self.refbot.set_next_step(time=self.time, phase=phase, position=position, orientation=orientation,
+                                          robot_lin_vel=self.current_command_speed[:2] + [0],
+                                          robot_ang_vel=[0, 0] + self.current_command_speed[2:2],
+                                          joint_positions=joint_positions)
+            elif self.motion_type == "dynup":
+                self.refbot.set_next_step(time=self.time, phase=None, position=position, orientation=orientation,
+                                          robot_lin_vel=self.current_command_speed[:2] + [0],
+                                          robot_ang_vel=[0, 0] + self.current_command_speed[2:2],
+                                          joint_positions=joint_positions)
 
     def handle_gui(self):
         if self.gui:
@@ -633,7 +651,7 @@ class WolfgangDynupEnv(DeepQuinticEnv):
                  ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
-                 state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
+                 state_type="full", cyclic_phase=False, rot_type="rpy", filter_actions=False, terrain_height=0,
                  foot_sensors_type="", use_rt_in_state=False, randomize=False, use_complementary_filter=True,
                  random_head_movement=True, adaptive_phase=False):
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, motion_type="dynup", reward_function=reward_function,
@@ -641,7 +659,8 @@ class WolfgangDynupEnv(DeepQuinticEnv):
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
                                 use_engine=use_engine, cartesian_state=cartesian_state,
                                 cartesian_action=cartesian_action, relative=relative,
-                                use_state_buffer=use_state_buffer, cyclic_phase=cyclic_phase, rot_type=rot_type,
+                                use_state_buffer=use_state_buffer, phase_in_state=False,
+                                cyclic_phase=cyclic_phase, rot_type=rot_type,
                                 use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
                                 terrain_height=terrain_height, foot_sensors_type=foot_sensors_type, randomize=randomize,
                                 use_complementary_filter=use_complementary_filter,

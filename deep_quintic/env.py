@@ -283,7 +283,6 @@ class DeepQuinticEnv(gym.Env):
             self.randomize_domain()
         if self.terrain_height > 0:
             self.sim.randomize_terrain(self.terrain_height)
-
         # if we have a reference trajectory we set the simulation to a random start in it
         if self.trajectory:
             # choose randomly a start index from all available frames
@@ -293,17 +292,17 @@ class DeepQuinticEnv(gym.Env):
             self.robot.reset_to_reference(self.refbot, self.randomize)
         elif self.engine is not None:
             # choose random initial state of the engine
-            self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
-                                          random.uniform(*self.cmd_vel_current_bounds[1]),
-                                          random.uniform(*self.cmd_vel_current_bounds[2])]
-            # make sure that the combination of x and y speed is not too low or too high
-            if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.cmd_vel_max_bounds[3]:
-                # decrease one of the two
-                direction = 1  # random.randint(0, 2)
-                sign = 1 if self.current_command_speed[direction] > 0 else -1
-                self.current_command_speed[direction] = sign * (abs(self.cmd_vel_max_bounds[3]) - abs(
-                    self.current_command_speed[(direction + 1) % 2]))
-
+            if self.motion_type == "walk":
+                self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
+                                              random.uniform(*self.cmd_vel_current_bounds[1]),
+                                              random.uniform(*self.cmd_vel_current_bounds[2])]
+                # make sure that the combination of x and y speed is not too low or too high
+                if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.cmd_vel_max_bounds[3]:
+                    # decrease one of the two
+                    direction = 1  # random.randint(0, 2)
+                    sign = 1 if self.current_command_speed[direction] > 0 else -1
+                    self.current_command_speed[direction] = sign * (abs(self.cmd_vel_max_bounds[3]) - abs(
+                        self.current_command_speed[(direction + 1) % 2]))
             # set command vel based on GUI input if appropriate
             if self.gui:
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()
@@ -315,8 +314,10 @@ class DeepQuinticEnv(gym.Env):
                 # reset the engine to specific start values
                 self.engine.special_reset(engine_state, phase, cmd_vel_to_twist(self.current_command_speed), True)
             elif self.motion_type == "dynup":
-                time = random.uniform() #TODO: make this the right length
+                time = random.uniform()
                 self.engine.special_reset(time)
+                direction = random.choice(["front", "back"])
+                self.engine.set_engine_goal(direction)
             # compute 3 times to set previous, current and next frame
             # previous
             self.refbot_compute_next_step(reset=True)

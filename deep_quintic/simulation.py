@@ -23,9 +23,6 @@ from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
 except:
-    class SupervisorController:
-        def __init__(self):
-            pass
     rospy.logerr("Could not load webots sim. If you want to use it, source the setenvs.sh")
 
 

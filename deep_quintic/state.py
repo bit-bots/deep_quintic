@@ -5,7 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
-from rospy import Publisher
+from rclpy import Node
 from std_msgs.msg import Float32MultiArray
 
 from typing import TYPE_CHECKING
@@ -29,10 +29,10 @@ class State:
         if len(self.debug_publishers.keys()) == 0:
             # initialize publishers
             for name in entries.keys():
-                self.debug_publishers[name] = Publisher("state_" + name, Float32MultiArray, queue_size=1)
+                self.debug_publishers[name] = self.env.node.create_publisher(Float32MultiArray, "state_" + name, 1)
         for entry_name in entries.keys():
             publisher = self.debug_publishers[entry_name]
-            if publisher.get_num_connections() > 0:
+            if publisher.get_subscription_count() > 0:
                 publisher.publish(Float32MultiArray(data=entries[entry_name]))
 
     def get_state_entries(self, scaled):

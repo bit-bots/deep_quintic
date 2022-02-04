@@ -15,8 +15,9 @@ from collections import defaultdict
 from typing import Tuple, Dict, Any, Optional
 
 import numpy as np
-import rospy
-import actionlib
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionClient
 import stable_baselines3
 import yaml
 from bitbots_moveit_bindings import get_position_fk
@@ -76,7 +77,8 @@ class ExecuteEnv(WolfgangWalkEnv):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False, use_gyro=True, use_imu_orientation=True):
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
+                 use_gyro=True, use_imu_orientation=True, node: Node = None):
         super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
                          ros_debug=True, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -86,9 +88,11 @@ class ExecuteEnv(WolfgangWalkEnv):
                          use_rt_in_state=use_rt_in_state, filter_actions=filter_actions,
                          terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                          phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
-                         use_complementary_filter=False, random_head_movement=False, adaptive_phase=adaptive_phase, use_gyro=use_gyro, use_imu_orientation=use_imu_orientation)
+                         use_complementary_filter=False, random_head_movement=False, adaptive_phase=adaptive_phase,
+                         use_gyro=use_gyro, use_imu_orientation=use_imu_orientation, node=node)
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
+        self.node = node
 
         # additional class variables we need since we are not running the walking at the same time
         self.refbot.phase = 0
@@ -113,41 +117,37 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.is_stopped = True
         self.robot_state = RobotControlState.CONTROLLABLE
 
-        self.joint_publisher = rospy.Publisher('walking_motor_goals', JointCommand, queue_size=1)
-        self.support_publisher = rospy.Publisher('walk_support_state', SupportState, queue_size=1)
-        self.current_command_speed_sub = rospy.Subscriber('cmd_vel', Twist, self.current_command_speed_cb,
-                                                          queue_size=1)
-        self.imu_sub = rospy.Subscriber('imu/data', Imu, self.imu_cb, queue_size=1)
-        self.joint_state_sub = rospy.Subscriber('joint_states', JointState, self.joint_state_cb, queue_size=1)
-        self.robot_state_sub = rospy.Subscriber('robot_state', RobotControlState, self.robot_state_cb, queue_size=1)
+        self.joint_publisher = self.node.create_publisher(JointCommand, 'walking_motor_goals', 1)
+        self.support_publisher = self.node.create_publisher(SupportState, 'walk_support_state', 1)
+        self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
+                                                                       1)
+        self.imu_sub = self.node.create_subscription(Imu, 'imu/data', self.imu_cb, 1)
+        self.joint_state_sub = self.node.create_subscription(JointState, 'joint_states', self.joint_state_cb, 1)
+        self.robot_state_sub = self.node.create_subscription(RobotControlState, 'robot_state', self.robot_state_cb, 1)
         if foot_sensors_type == "filtered":
-            self.left_pressure_sub = rospy.Subscriber('foot_pressure_left/filtered', FootPressure,
-                                                      lambda msg: self.foot_pressure_cb(msg, True),
-                                                      queue_size=1)
-            self.right_pressure_sub = rospy.Subscriber('foot_pressure_right/filtered', FootPressure,
-                                                       lambda msg: self.foot_pressure_cb(msg, False),
-                                                       queue_size=1)
+            self.left_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_left/filtered',
+                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1)
+            self.right_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_right/filtered',
+                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1)
         elif foot_sensors_type in ["raw", "binary"]:
-            self.left_pressure_sub = rospy.Subscriber('foot_pressure_left/raw', FootPressure,
-                                                      lambda msg: self.foot_pressure_cb(msg, True),
-                                                      queue_size=1)
-            self.right_pressure_sub = rospy.Subscriber('foot_pressure_right/raw', FootPressure,
-                                                       lambda msg: self.foot_pressure_cb(msg, False),
-                                                       queue_size=1)
+            self.left_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_left/raw',
+                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1)
+            self.right_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_right/raw',
+                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1)
         elif foot_sensors_type == "":
             self.got_foot_pressure = True
         else:
             print(f"Problem: use foot sensors is {foot_sensors_type}")
             exit()
 
-        urdf = URDF.from_xml_string(rospy.get_param('robot_description'))
+        urdf = URDF.from_xml_string(self.node.get_parameter('robot_description'))
         self.joint_limits = {
             joint.name: (joint.limit.lower, joint.limit.upper) for joint in urdf.joints if joint.limit
         }
 
         # see that we got all data from the various subscribers
         while self.current_joint_positions is None or self.ang_vel is None or not self.got_foot_pressure:
-            rospy.loginfo_throttle(10, "Waiting for data from subscribers")
+            self.node.get_logger().info("throttle_duration_sec", throttle_duration_sec=10)
             time.sleep(1)
 
     def apply_action(self, action):
@@ -155,7 +155,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         if not self.is_stopped:
             action = self.action_filter.filter(action)
             msg = JointCommand()
-            msg.header.stamp = rospy.Time.now()
+            msg.header.stamp = self.node.get_clock().now()
             msg.joint_names = self.robot.used_joint_names
             msg.velocities = [-1] * len(self.robot.used_joint_names)
             msg.accelerations = [-1] * len(self.robot.used_joint_names)
@@ -175,7 +175,7 @@ class ExecuteEnv(WolfgangWalkEnv):
 
             # support state is necessary for odometry
             msg = SupportState()
-            msg.header.stamp = rospy.Time.now()
+            msg.header.stamp = self.node.get_clock().now()
             if self.refbot.phase > 0.5:
                 msg.state = SupportState.LEFT
             else:
@@ -201,7 +201,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 # need to have two states updates first so that the previous positions are set for velocity computation
                 return None
         # calc velocities
-        time = rospy.Time.now().to_sec()
+        time = self.node.get_clock().now().to_sec()
         if self.last_time is None:
             self.last_time = time - 0.001
         time_diff = time - self.last_time
@@ -235,7 +235,7 @@ class ExecuteEnv(WolfgangWalkEnv):
 
         # Check for too long dt
         if dt > 0.5 / self.freq:
-            rospy.logerr(f"DeepQuintic error too long dt phase={self.refbot.phase} dt={dt}")
+            self.node.get_logger().error(f"DeepQuintic error too long dt phase={self.refbot.phase} dt={dt}")
             return
 
         # Update the phase
@@ -294,10 +294,10 @@ class ExecuteEnv(WolfgangWalkEnv):
 
     def run_node(self, model, venv):
         rate = self.step_freq
-        r = rospy.Rate(rate)
+        r = self.node.create_rate(rate)
         state = None
         # start main loop
-        while not rospy.is_shutdown():
+        while rclpy.ok():
             if self.robot_state == RobotControlState.WALKING or (
                     self.robot_state == RobotControlState.CONTROLLABLE and (
                     not self.current_command_speed == (0, 0, 0) or not self.is_stopped)):
@@ -311,7 +311,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 self.last_action = action
                 self.apply_action(action)
                 # progress phase and compute current state
-                time = rospy.Time.now().to_sec()
+                time = self.node.get_clock().now().to_sec()
                 self.progress_phase(time, action)
                 self.ros_interface.publish_action()
             else:

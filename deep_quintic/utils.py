@@ -7,12 +7,12 @@ from enum import Enum
 
 import gym
 import numpy as np
-import rospy
 from geometry_msgs.msg import Point, Quaternion
-from moveit_msgs.srv import GetPositionIKRequest
+from moveit_msgs.srv import GetPositionIK
 
 
 from bitbots_moveit_bindings import get_position_ik, get_position_fk
+from rclpy.time import Time
 from transforms3d.euler import quat2euler, euler2quat
 from transforms3d.quaternions import rotate_vector, qinverse, quat2mat, mat2quat
 
@@ -53,20 +53,22 @@ def compute_imu_orientation_from_world(robot_quat_in_world):
 
 def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, used_joint_names, joint_indexes,
                collision=False, approximate=False):
-    request = GetPositionIKRequest()
-    request.ik_request.timeout = rospy.Time.from_seconds(0.01)
+    request = GetPositionIK.Request()
+    request.ik_request.timeout = Time(seconds=int(0.01), nanoseconds=0.01 % 1 * 1e9)
     # request.ik_request.attempts = 1
     request.ik_request.avoid_collisions = collision
 
     request.ik_request.group_name = "LeftLeg"
-    request.ik_request.pose_stamped.pose.position = Point(*left_foot_pos)
+    request.ik_request.pose_stamped.pose.position = Point(x=left_foot_pos[0], y=left_foot_pos[1], z=left_foot_pos[2])
     # quaternion needs to be in ros style xyzw
-    request.ik_request.pose_stamped.pose.orientation = Quaternion(*wxyz2xyzw(left_foot_quat))
+    quat = wxyz2xyzw(left_foot_quat)
+    request.ik_request.pose_stamped.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
     ik_result = get_position_ik(request, approximate=approximate)
     first_error_code = ik_result.error_code.val
     request.ik_request.group_name = "RightLeg"
-    request.ik_request.pose_stamped.pose.position = Point(*right_foot_pos)
-    request.ik_request.pose_stamped.pose.orientation = Quaternion(*wxyz2xyzw(right_foot_quat))
+    request.ik_request.pose_stamped.pose.position = Point(x=right_foot_pos[0],y=right_foot_pos[1], z=right_foot_pos[2])
+    quat = wxyz2xyzw(right_foot_quat)
+    request.ik_request.pose_stamped.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
     ik_result = get_position_ik(request, approximate=approximate)
     # check if no solution or collision
     error_codes = [-31]

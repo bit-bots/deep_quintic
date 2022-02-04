@@ -1,7 +1,7 @@
 from abc import ABC
 import math
 import numpy as np
-import rospy
+import rclpy
 from moveit_msgs.srv import GetPositionFKRequest
 from pyquaternion import Quaternion
 from std_msgs.msg import Float32
@@ -22,8 +22,8 @@ class AbstractReward(ABC):
         self.env = env
         self.episode_reward = 0
         self.current_reward = 0
-        self.publisher = rospy.Publisher("Reward_" + self.name, Float32, queue_size=1)
-        self.episode_publisher = rospy.Publisher("Reward_" + self.name + "_episode", Float32, queue_size=1)
+        self.publisher = self.env.node.create_publisher(Float32, "Reward_" + self.name, 1)
+        self.episode_publisher = self.env.node.create_publisher(Float32, "Reward_" + self.name + "_episode", 1)
 
     def reset_episode_reward(self):
         self.episode_reward = 0
@@ -35,10 +35,10 @@ class AbstractReward(ABC):
         return self.name
 
     def publish_reward(self):
-        if self.publisher.get_num_connections() > 0:
-            self.publisher.publish(Float32(self.current_reward))
-        if self.episode_publisher.get_num_connections() > 0:
-            self.episode_publisher.publish(Float32(self.episode_reward))
+        if self.publisher.get_subscription_count() > 0:
+            self.publisher.publish(Float32(data=self.current_reward))
+        if self.episode_publisher.get_subscription_count() > 0:
+            self.episode_publisher.publish(Float32(data=self.episode_reward))
 
     def compute_reward(self):
         print("not implemented, this is abstract")
@@ -79,10 +79,10 @@ class CombinedReward(AbstractReward):
         return info
 
     def publish_reward(self):
-        if self.publisher.get_num_connections() > 0:
-            self.publisher.publish(Float32(self.current_reward))
-        if self.episode_publisher.get_num_connections() > 0:
-            self.episode_publisher.publish(Float32(self.episode_reward))
+        if self.publisher.get_subscription_count() > 0:
+            self.publisher.publish(Float32(data=self.current_reward))
+        if self.episode_publisher.get_subscription_count() > 0:
+            self.episode_publisher.publish(Float32(data=self.episode_reward))
         for reward in self.reward_classes:
             reward.publish_reward()
 

@@ -1,12 +1,13 @@
 import json
 
 import numpy as np
-import rospy
+import rclpy
+from rclpy.node import Node
 from geometry_msgs.msg import Pose, Point, Quaternion
 import random
 
-from moveit_msgs.srv import GetPositionFKRequest
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+from moveit_msgs.srv import GetPositionFK
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
 class Trajectory:
 

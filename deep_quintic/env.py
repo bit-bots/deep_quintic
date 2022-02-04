@@ -1,4 +1,5 @@
 # THIS IS A MAGIC IMPORT WHICH FIXES A "terminate called after throwing an instance of 'std::bad_cast'" ERROR
+from rclpy import Node
 from torch import nn as nn
 
 import numpy as np
@@ -47,7 +48,8 @@ class DeepQuinticEnv(gym.Env):
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
-                 adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True) -> None:
+                 adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
+                 node: Node = None) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -57,6 +59,7 @@ class DeepQuinticEnv(gym.Env):
         @param trajectory_file: file containing reference trajectory. without the environment will not use it
         @param early_termination: if episode should be terminated early when robot falls
         """
+        self.node = node
         self.gui = gui
         self.ros_debug = ros_debug
         self.cartesian_state = cartesian_state
@@ -146,16 +149,16 @@ class DeepQuinticEnv(gym.Env):
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
             isinstance(self.reward_function, CartesianStateVelReward)) or (
                                 self.cartesian_state and not self.state_type == "base"))
-        self.robot = Robot(simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
+        self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
                            used_joints=used_joints, physics=True,
                            compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
                            use_complementary_filter=use_complementary_filter)
         if self.gui:
             # the reference bot only needs to be connect to pybullet if we want to display it
-            self.refbot = Robot(simulation=self.sim, used_joints=used_joints)
+            self.refbot = Robot(node, simulation=self.sim, used_joints=used_joints)
             self.refbot.set_alpha(0.5)
         else:
-            self.refbot = Robot(used_joints=used_joints)
+            self.refbot = Robot(node, used_joints=used_joints)
 
         # load trajectory if provided
         self.trajectory = None
@@ -568,7 +571,7 @@ class DeepQuinticEnv(gym.Env):
             if self.adaptive_phase:
                 # just use the normal fixed timestep as initial value for the timestep but scale it to [-1, 1]
                 time_of_single_step = 0.5 / self.engine_freq
-                action_mu.append((self.env_timestep/time_of_single_step) *2 - 1)
+                action_mu.append((self.env_timestep / time_of_single_step) * 2 - 1)
             return action_mu
 
     def _seed(self, seed=None):
@@ -609,7 +612,10 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True):
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None):
+        if node is None:
+            node = Node('walk_env')
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -621,4 +627,5 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
-                                adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro, use_imu_orientation=use_imu_orientation)
+                                adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
+                                use_imu_orientation=use_imu_orientation, node=node)

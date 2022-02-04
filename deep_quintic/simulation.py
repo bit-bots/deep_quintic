@@ -7,7 +7,6 @@ from abc import ABC
 import pybullet as p
 import numpy as np
 import rospkg
-import rospy
 import transforms3d.axangles
 try:
     #this import is from webots not from the controller python package. if the controller package is installed it will also fail!
@@ -23,7 +22,7 @@ from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
 except:
-    rospy.logerr("Could not load webots sim. If you want to use it, source the setenvs.sh")
+    print("Could not load webots sim. If you want to use it, source the setenvs.sh")
 
 
 class AbstractSim:

@@ -2,7 +2,7 @@ from abc import ABC
 import math
 import numpy as np
 import rclpy
-from moveit_msgs.srv import GetPositionFKRequest
+from moveit_msgs.srv import GetPositionFK
 from pyquaternion import Quaternion
 from std_msgs.msg import Float32
 from transforms3d.euler import quat2euler
@@ -342,12 +342,12 @@ class IKErrorReward(AbstractReward):
     def compute_reward(self):
         # gives reward based on the size of the IK error for the current action.
         # this can be helpful to avoid wrong actions and as debug
-        request = GetPositionFKRequest()
+        request = GetPositionFK.Request()
         for i in range(len(self.env.robot.leg_joints)):
             request.robot_state.joint_state.name.append(self.env.robot.leg_joints[i])
             request.robot_state.joint_state.position.append(self.env.robot.last_ik_result[i])
         request.fk_link_names = ['l_sole', 'r_sole']
-        result = get_position_fk(request)  # type: GetPositionFKResponse
+        result = get_position_fk(request)  # type: GetPositionFK.Response
         l_sole = result.pose_stamped[result.fk_link_names.index('l_sole')].pose
         fk_left_foot_pos = np.array([l_sole.position.x, l_sole.position.y, l_sole.position.z])
         l_sole_quat = l_sole.orientation

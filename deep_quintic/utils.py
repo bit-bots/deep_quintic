@@ -12,6 +12,7 @@ from moveit_msgs.srv import GetPositionIK
 
 
 from bitbots_moveit_bindings import get_position_ik, get_position_fk
+from rclpy.duration import Duration
 from rclpy.time import Time
 from transforms3d.euler import quat2euler, euler2quat
 from transforms3d.quaternions import rotate_vector, qinverse, quat2mat, mat2quat
@@ -54,7 +55,7 @@ def compute_imu_orientation_from_world(robot_quat_in_world):
 def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, used_joint_names, joint_indexes,
                collision=False, approximate=False):
     request = GetPositionIK.Request()
-    request.ik_request.timeout = Time(seconds=int(0.01), nanoseconds=0.01 % 1 * 1e9)
+    request.ik_request.timeout = Duration(seconds=int(0.01), nanoseconds=0.01 % 1 * 1e9).to_msg()
     # request.ik_request.attempts = 1
     request.ik_request.avoid_collisions = collision
 

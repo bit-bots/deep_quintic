@@ -3,8 +3,6 @@
 import math
 import time
 
-import rosparam
-import rospkg
 from humanoid_league_msgs.msg import RobotControlState
 
 import deep_quintic
@@ -21,9 +19,8 @@ from rclpy.action import ActionClient
 import stable_baselines3
 import yaml
 from bitbots_moveit_bindings import get_position_fk
-from bitbots_msgs.msg import KickAction, JointCommand, FootPressure, KickGoal, SupportState
+from bitbots_msgs.msg import JointCommand, FootPressure, SupportState
 from geometry_msgs.msg import PoseStamped, Twist
-from moveit_msgs.srv import GetPositionFKRequest, GetPositionFKResponse
 from sb3_contrib import QRDQN, TQC
 from sensor_msgs.msg import Imu, JointState
 from stable_baselines3 import PPO, DQN, DDPG, A2C, SAC, TD3
@@ -97,10 +94,8 @@ class ExecuteEnv(WolfgangWalkEnv):
         # additional class variables we need since we are not running the walking at the same time
         self.refbot.phase = 0
         self.last_time = None
-        rospack = rospkg.RosPack()
-        load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml",
-                           rospack)
-        self.freq = rosparam.get_param("/walking/engine/freq")
+        load_yaml_to_param(self.node, self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml")
+        self.freq = self.node.get_parameter("/walking/engine/freq")
 
         # todo we dont initilize action filter correctly. history is empty
 

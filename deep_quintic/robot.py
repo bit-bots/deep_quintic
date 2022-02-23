@@ -23,6 +23,7 @@ from deep_quintic.utils import compute_imu_orientation_from_world, wxyz2xyzw, xy
 class Robot:
     def __init__(self, node: Node, simulation: AbstractSim = None, compute_joints=False, compute_feet=False,
                  used_joints="Legs", physics=False, compute_smooth_vel=False, use_complementary_filter=True):
+        self.node = node
         self.physics_active = physics
         self.sim = simulation
         self.compute_joints = compute_joints

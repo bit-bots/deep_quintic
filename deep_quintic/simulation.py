@@ -6,7 +6,6 @@ import time
 from abc import ABC
 import pybullet as p
 import numpy as np
-import rospkg
 import transforms3d.axangles
 try:
     #this import is from webots not from the controller python package. if the controller package is installed it will also fail!
@@ -18,6 +17,9 @@ from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
 from wolfgang_pybullet_sim.simulation import Simulation
 
 from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
+from ament_index_python import get_package_share_directory
+from ros2param.api import load_parameter_file
+
 
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
@@ -27,8 +29,8 @@ except:
 
 class AbstractSim:
 
-    def __init__(self):
-        pass
+    def __init__(self, node):
+        self.node = node
 
     def get_base_velocity(self, robot_index):
         raise NotImplementedError
@@ -130,15 +132,24 @@ class AbstractSim:
 
 class PybulletSim(Simulation, AbstractSim):
 
-    def __init__(self, gui, terrain_height, robot="wolfgang"):
-        AbstractSim.__init__(self)
+    def __init__(self, node, gui, terrain_height, robot="wolfgang"):
+        AbstractSim.__init__(self, node)
+
+        self.node.declare_parameter("simulation_active", True)
+        self.node.declare_parameter("contact_stiffness", 0.0)
+        self.node.declare_parameter("joint_damping", 0.0)
+        self.node.declare_parameter("spinning_friction", 0.0)
+        self.node.declare_parameter("contact_damping", 0.0)
+        self.node.declare_parameter("lateral_friction", 0.0)
+        self.node.declare_parameter("rolling_friction", 0.0)
+        self.node.declare_parameter("cutoff", 0)
+        self.node.declare_parameter("order", 0)
+        # load simulation params
+        load_parameter_file(node=self.node, node_name=self.node.get_name(),
+                            parameter_file=f'{get_package_share_directory("wolfgang_pybullet_sim")}/config/config.yaml', use_wildcard=True)
         Simulation.__init__(self, gui, urdf_path=None, terrain_height=terrain_height, field=False, robot=robot,
                             load_robot=False)
 
-        # load simuation params
-        rospack = rospkg.RosPack()
-        # print(self.namespace)
-        load_yaml_to_param("", 'wolfgang_pybullet_sim', '/config/config.yaml', rospack)
         self.gui = gui
         if self.gui:
             p.configureDebugVisualizer(p.COV_ENABLE_GUI, True)
@@ -214,8 +225,7 @@ class WebotsSim(SupervisorController, AbstractSim):
 
         if start_webots:
             # start webots
-            rospack = rospkg.RosPack()
-            path = rospack.get_path("wolfgang_webots_sim")
+            path = get_package_share_directory("wolfgang_webots_sim")
 
             arguments = ["webots",
                          "--batch",

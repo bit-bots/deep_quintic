@@ -5,7 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
-from rclpy import Node
+from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
 
 from typing import TYPE_CHECKING

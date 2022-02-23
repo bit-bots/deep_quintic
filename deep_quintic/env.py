@@ -1,5 +1,12 @@
-# THIS IS A MAGIC IMPORT WHICH FIXES A "terminate called after throwing an instance of 'std::bad_cast'" ERROR
-from rclpy import Node
+import threading
+from time import sleep
+
+import rclpy
+from ament_index_python import get_package_share_directory
+from launch.substitutions import Command
+from launch_ros.utilities import normalize_parameters
+from rclpy import Parameter
+from rclpy.node import Node
 from torch import nn as nn
 
 import numpy as np
@@ -7,7 +14,6 @@ from bitbots_msgs.msg import FootPressure
 from geometry_msgs.msg import Twist
 from numpy import random
 import gym
-import rospkg
 from sensor_msgs.msg import Imu
 
 from transforms3d.euler import quat2euler
@@ -16,7 +22,8 @@ from deep_quintic.engine import WalkEngine
 from stable_baselines3.common.env_checker import check_env
 
 from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
-from bitbots_quintic_walk import PyWalk
+from bitbots_quintic_walk_py.py_walk import PyWalk
+from launch_ros.parameter_descriptions import ParameterValue
 
 from deep_quintic.butter_filter import ButterFilter
 from deep_quintic.ros_debug_interface import ROSDebugInterface
@@ -31,6 +38,33 @@ from deep_quintic.simulation import WebotsSim, PybulletSim
 from deep_quintic.state import CartesianState, JointSpaceState, PhaseState, BaseState
 from deep_quintic.trajectory import Trajectory
 from deep_quintic.utils import Rot
+from ros2param.api import parse_parameter_dict
+import os
+import yaml
+
+
+def get_parameters_from_yaml(node_name, parameter_file, use_wildcard):
+    # Remove leading slash and namespaces
+    with open(parameter_file, 'r') as f:
+        param_file = yaml.safe_load(f)
+        param_keys = []
+        if use_wildcard and '/**' in param_file:
+            param_keys.append('/**')
+        if node_name in param_file:
+            param_keys.append(node_name)
+
+        if param_keys == []:
+            raise RuntimeError('Param file does not contain parameters for {}, '
+                               ' only for nodes: {}'.format(node_name, param_file.keys()))
+        param_dict = {}
+        for k in param_keys:
+            value = param_file[k]
+            if type(value) != dict or 'ros__parameters' not in value:
+                raise RuntimeError('Invalid structure of parameter file for node {}'
+                                   'expected same format as provided by ros2 param dump'
+                                   .format(k))
+            param_dict.update(value['ros__parameters'])
+        return parse_parameter_dict(namespace='', parameter_dict=param_dict)
 
 
 class DeepQuinticEnv(gym.Env):
@@ -139,11 +173,11 @@ class DeepQuinticEnv(gym.Env):
             self.sim = None
         else:
             if simulator_type == "webots":
-                self.sim = WebotsSim(self.gui, start_webots=True)
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True)
             elif simulator_type == "webots_extern":
-                self.sim = WebotsSim(self.gui)
+                self.sim = WebotsSim(self.node, self.gui)
             elif simulator_type == "pybullet":
-                self.sim = PybulletSim(self.gui, self.terrain_height)
+                self.sim = PybulletSim(self.node, self.gui, self.terrain_height)
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
@@ -163,25 +197,20 @@ class DeepQuinticEnv(gym.Env):
         # load trajectory if provided
         self.trajectory = None
         self.engine = None
-        self.current_command_speed = [0, 0, 0]
+        self.current_command_speed = [0.0, 0.0, 0.0]
         self.namespace = ""
         if trajectory_file is not None:
             self.trajectory = Trajectory()
             self.trajectory.load_from_json(trajectory_file)
         elif use_engine:
-            # load robot model to ROS
-            try:
-                rospack = rospkg.RosPack()
-                load_robot_param(self.namespace, rospack, "wolfgang")
-            except ConnectionRefusedError:
-                print("### Start roscore! ###")
-                exit(1)
             # load walking params
             sim_name = simulator_type
             if sim_name == "webots_extern":
                 sim_name = "webots"
-            load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
-            self.engine = WalkEngine(self.namespace)
+            parameters = get_parameters_from_yaml("walking",
+                                                  f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
+                                                  use_wildcard=True)
+            self.engine = WalkEngine(self.namespace, parameters)
             self.engine_freq = self.engine.get_freq()
         else:
             print("Warning: Neither trajectory nor engine provided")
@@ -238,7 +267,7 @@ class DeepQuinticEnv(gym.Env):
 
         # add publisher if ROS debug is active
         if self.ros_debug:
-            self.ros_interface = ROSDebugInterface(self, init_node=True)
+            self.ros_interface = ROSDebugInterface(self)
 
         # run check after everything is initialized
         if False and self.ros_debug:
@@ -563,7 +592,7 @@ class DeepQuinticEnv(gym.Env):
             return self.num_actions * [0]
         else:
             # reset the engine to start of step and compute refbot accordingly
-            self.engine.special_reset("START_MOVEMENT", 0, cmd_vel_to_twist((0, 0, 0), True), True)
+            self.engine.special_reset("START_MOVEMENT", 0.0, cmd_vel_to_twist((0.0, 0.0, 0.0), True), True)
             self.refbot_compute_next_step(0.0001)
             self.refbot.step()
             self.refbot.solve_ik_exactly()
@@ -595,12 +624,12 @@ def cmd_vel_to_twist(cmd_vel, stop=False):
     cmd_vel_msg = Twist()
     cmd_vel_msg.linear.x = cmd_vel[0]
     cmd_vel_msg.linear.y = cmd_vel[1]
-    cmd_vel_msg.linear.z = 0
-    cmd_vel_msg.angular.x = 0
-    cmd_vel_msg.angular.y = 0
+    cmd_vel_msg.linear.z = 0.0
+    cmd_vel_msg.angular.x = 0.0
+    cmd_vel_msg.angular.y = 0.0
     cmd_vel_msg.angular.z = cmd_vel[2]
     if stop:
-        cmd_vel_msg.angular.x = -1
+        cmd_vel_msg.angular.x = -1.0
     return cmd_vel_msg
 
 
@@ -615,7 +644,16 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
                  random_force=False, use_gyro=True, use_imu_orientation=True, node=None):
         if node is None:
-            node = Node('walk_env')
+            rclpy.init()
+            node_name = 'walking_env'
+            node = Node(node_name)
+
+            #parameters = get_parameters_from_yaml("walking",
+            #                         f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_webots.yaml",
+            #                         use_wildcard=True)
+            #self.engine = WalkEngine("", parameters)
+
+
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,

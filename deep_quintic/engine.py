@@ -1,6 +1,5 @@
 from bitbots_moveit_bindings import libbitbots_moveit_bindings
 from bitbots_quintic_walk_py.py_walk import PyWalk
-from bitbots_quintic_walk_py.libpy_quintic_walk import initRos
 
 class AbstractEngine:
 
@@ -27,5 +26,4 @@ class WalkEngine(PyWalk, AbstractEngine):
 
     def __init__(self, namespace, parameters=[]):
         AbstractEngine.__init__(self, namespace, parameters)
-        initRos()
         PyWalk.__init__(self, namespace, parameters)

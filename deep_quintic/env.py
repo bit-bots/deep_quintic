@@ -1,13 +1,9 @@
-import threading
-from time import sleep
-
+import rcl_interfaces.msg
 import rclpy
 from ament_index_python import get_package_share_directory
-from launch.substitutions import Command
-from launch_ros.utilities import normalize_parameters
-from rclpy import Parameter
+from bitbots_moveit_bindings import set_moveit_parameters
+from bitbots_moveit_bindings.libbitbots_moveit_bindings import initRos
 from rclpy.node import Node
-from torch import nn as nn
 
 import numpy as np
 from bitbots_msgs.msg import FootPressure
@@ -20,10 +16,6 @@ from transforms3d.euler import quat2euler
 
 from deep_quintic.engine import WalkEngine
 from stable_baselines3.common.env_checker import check_env
-
-from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
-from bitbots_quintic_walk_py.py_walk import PyWalk
-from launch_ros.parameter_descriptions import ParameterValue
 
 from deep_quintic.butter_filter import ButterFilter
 from deep_quintic.ros_debug_interface import ROSDebugInterface
@@ -41,9 +33,11 @@ from deep_quintic.utils import Rot
 from ros2param.api import parse_parameter_dict
 import os
 import yaml
+from rcl_interfaces.msg import Parameter as ParameterMsg
+from rcl_interfaces.msg import ParameterValue as ParameterValueMsg
 
 
-def get_parameters_from_yaml(node_name, parameter_file, use_wildcard):
+def get_parameters_from_ros_yaml(node_name, parameter_file, use_wildcard):
     # Remove leading slash and namespaces
     with open(parameter_file, 'r') as f:
         param_file = yaml.safe_load(f)
@@ -65,6 +59,12 @@ def get_parameters_from_yaml(node_name, parameter_file, use_wildcard):
                                    .format(k))
             param_dict.update(value['ros__parameters'])
         return parse_parameter_dict(namespace='', parameter_dict=param_dict)
+
+
+def get_parameters_from_plain_yaml(parameter_file, namespace=''):
+    with open(parameter_file, 'r') as f:
+        param_dict = yaml.safe_load(f)
+        return parse_parameter_dict(namespace=namespace, parameter_dict=param_dict)
 
 
 class DeepQuinticEnv(gym.Env):
@@ -183,6 +183,26 @@ class DeepQuinticEnv(gym.Env):
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
             isinstance(self.reward_function, CartesianStateVelReward)) or (
                                 self.cartesian_state and not self.state_type == "base"))
+        # load moveit parameters for IK calls later
+        moveit_parameters = get_parameters_from_plain_yaml(
+            f"{get_package_share_directory('wolfgang_moveit_config')}/config/kinematics.yaml",
+            "robot_description_kinematics.")
+        robot_description = ParameterMsg()
+        robot_description.name = "robot_description"
+        value = os.popen(
+            f"xacro {get_package_share_directory('wolfgang_description')}/urdf/robot.urdf use_fake_walk:=false sim_ns:=false").read()
+        robot_description.value = ParameterValueMsg(string_value=value,
+                                                    type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
+        moveit_parameters.append(robot_description)
+        robot_description_semantic = ParameterMsg()
+        robot_description_semantic.name = "robot_description_semantic"
+        with open(f"{get_package_share_directory('wolfgang_moveit_config')}/config/wolfgang.srdf", "r") as file:
+            value = file.read()
+            robot_description_semantic.value = ParameterValueMsg(string_value=value,
+                                                                 type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
+        moveit_parameters.append(robot_description_semantic)
+        initRos()  # need to be initialized for the c++ ros2 node
+        set_moveit_parameters(moveit_parameters)
         self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
                            used_joints=used_joints, physics=True,
                            compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
@@ -207,10 +227,10 @@ class DeepQuinticEnv(gym.Env):
             sim_name = simulator_type
             if sim_name == "webots_extern":
                 sim_name = "webots"
-            parameters = get_parameters_from_yaml("walking",
-                                                  f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
-                                                  use_wildcard=True)
-            self.engine = WalkEngine(self.namespace, parameters)
+            walk_parameters = get_parameters_from_ros_yaml("walking",
+                                                           f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
+                                                           use_wildcard=True)
+            self.engine = WalkEngine(self.namespace, walk_parameters + moveit_parameters)
             self.engine_freq = self.engine.get_freq()
         else:
             print("Warning: Neither trajectory nor engine provided")
@@ -647,12 +667,6 @@ class WolfgangWalkEnv(DeepQuinticEnv):
             rclpy.init()
             node_name = 'walking_env'
             node = Node(node_name)
-
-            #parameters = get_parameters_from_yaml("walking",
-            #                         f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_webots.yaml",
-            #                         use_wildcard=True)
-            #self.engine = WalkEngine("", parameters)
-
 
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,

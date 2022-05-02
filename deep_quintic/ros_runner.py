@@ -19,7 +19,8 @@ from rclpy.action import ActionClient
 import stable_baselines3
 import yaml
 from bitbots_moveit_bindings import get_position_fk
-from bitbots_msgs.msg import JointCommand, FootPressure, SupportState
+from bitbots_msgs.msg import JointCommand, FootPressure
+from biped_interfaces.msg import Phase
 from geometry_msgs.msg import PoseStamped, Twist
 from sb3_contrib import QRDQN, TQC
 from sensor_msgs.msg import Imu, JointState
@@ -97,7 +98,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         load_yaml_to_param(self.node, self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml")
         self.freq = self.node.get_parameter("/walking/engine/freq")
 
-        # todo we dont initilize action filter correctly. history is empty
+        # todo we dont initialize action filter correctly. history is empty
 
         # initialize ROS stuff
         self.got_foot_pressure = False
@@ -113,7 +114,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.robot_state = RobotControlState.CONTROLLABLE
 
         self.joint_publisher = self.node.create_publisher(JointCommand, 'walking_motor_goals', 1)
-        self.support_publisher = self.node.create_publisher(SupportState, 'walk_support_state', 1)
+        self.support_publisher = self.node.create_publisher(Phase, 'walk_support_state', 1)
         self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
                                                                        1)
         self.imu_sub = self.node.create_subscription(Imu, 'imu/data', self.imu_cb, 1)
@@ -169,12 +170,12 @@ class ExecuteEnv(WolfgangWalkEnv):
             self.joint_publisher.publish(msg)
 
             # support state is necessary for odometry
-            msg = SupportState()
+            msg = Phase()
             msg.header.stamp = self.node.get_clock().now()
             if self.refbot.phase > 0.5:
-                msg.state = SupportState.LEFT
+                msg.state = Phase.LEFT_STANCE
             else:
-                msg.state = SupportState.RIGHT
+                msg.state = Phase.RIGHT_STANCE
             # todo we are not detecting double support state
             # msg.state = SupportState.DOUBLE
             self.support_publisher.publish(msg)

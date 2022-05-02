@@ -570,7 +570,7 @@ class JointPositionActionReward(AbstractReward):
     def compute_reward(self):
         # the reference was already stepped when computing the reward therefore we use the current values not the next
         if self.env.cartesian_action:
-            print("DeepMimicActionReward does not work with cartesian action")
+            print("JointPositionActionReward does not work with cartesian action")
             exit(0)
         elif self.env.last_leg_action is None:
             # necessary to survive env_check()

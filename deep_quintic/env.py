@@ -107,7 +107,6 @@ class DeepQuinticEnv(gym.Env):
         self.filter_actions = filter_actions
         self.terrain_height = terrain_height
         self.phase_in_state = phase_in_state
-        self.step_freq = step_freq
         self.randomize = randomize
         self.use_complementary_filter = use_complementary_filter
         self.random_head_movement = random_head_movement
@@ -156,17 +155,6 @@ class DeepQuinticEnv(gym.Env):
         self.render_width = 800
         self.render_height = 600
 
-        self.time = 0
-        # time step should be at 240Hz (due to pyBullet documentation)
-        self.sim_timestep = (1 / 240)
-        # How many simulation steps have to be done per policy step
-        self.sim_steps = int((1 / self.sim_timestep) / step_freq)
-        # length of one step in env
-        self.env_timestep = 1 / step_freq
-        # ep_length_in_s is in seconds, compute how many steps this is
-        self.max_episode_steps = ep_length_in_s * step_freq
-        DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
-
         # Instantiating Simulation
         if "_off" in simulator_type:
             simulator_type = simulator_type[:-4]
@@ -176,8 +164,28 @@ class DeepQuinticEnv(gym.Env):
                 self.sim = WebotsSim(self.node, self.gui, start_webots=True)
             elif simulator_type == "webots_extern":
                 self.sim = WebotsSim(self.node, self.gui)
+            elif simulator_type == "webots_fast":
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True, fast_physics=True)
             elif simulator_type == "pybullet":
                 self.sim = PybulletSim(self.node, self.gui, self.terrain_height)
+
+        self.time = 0
+        # How many simulation steps have to be done per policy step
+        self.sim_steps = int((1 / self.sim.time_step) / step_freq)
+        # since we can only do full sim steps, actual step freq might be different than requested one
+        self.step_freq = 1 / (self.sim_steps * self.sim.time_step)
+        # length of one step in env
+        self.env_timestep = self.sim_steps * self.sim.time_step
+        # ep_length_in_s is in seconds, compute how many steps this is
+        self.max_episode_steps = ep_length_in_s * step_freq
+        DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
+
+        print(f"sim timestep {self.sim.time_step}")
+        print(f"sim_steps {self.sim_steps}")
+        print(f"requests env_timestep {1 / step_freq}")
+        print(f"actual env_timestep {self.env_timestep}")
+        print(f"requests freq {step_freq}")
+        print(f"actual freq {self.step_freq}")
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
@@ -225,7 +233,7 @@ class DeepQuinticEnv(gym.Env):
         elif use_engine:
             # load walking params
             sim_name = simulator_type
-            if sim_name == "webots_extern":
+            if sim_name in ["webots_extern", "webots_fast"]:
                 sim_name = "webots"
             walk_parameters = get_parameters_from_ros_yaml("walking",
                                                            f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
@@ -421,13 +429,13 @@ class DeepQuinticEnv(gym.Env):
                     *self.action_buffer[3]]
 
     def step_simulation(self):
-        self.time += self.sim_timestep
+        self.time += self.sim.time_step
         self.sim.step()
         # filters need to be done each step to have a high frequency
         if self.foot_sensors_type == "filtered":
             self.robot.step_pressure_filters()
         if self.use_complementary_filter:
-            self.robot.update_complementary_filter(self.sim_timestep)
+            self.robot.update_complementary_filter(self.sim.time_step)
 
     def step_trajectory(self):
         # step the trajectory further, based on the time
@@ -642,12 +650,12 @@ class DeepQuinticEnv(gym.Env):
 
 def cmd_vel_to_twist(cmd_vel, stop=False):
     cmd_vel_msg = Twist()
-    cmd_vel_msg.linear.x = cmd_vel[0]
-    cmd_vel_msg.linear.y = cmd_vel[1]
+    cmd_vel_msg.linear.x = float(cmd_vel[0])
+    cmd_vel_msg.linear.y = float(cmd_vel[1])
     cmd_vel_msg.linear.z = 0.0
     cmd_vel_msg.angular.x = 0.0
     cmd_vel_msg.angular.y = 0.0
-    cmd_vel_msg.angular.z = cmd_vel[2]
+    cmd_vel_msg.angular.z = float(cmd_vel[2])
     if stop:
         cmd_vel_msg.angular.x = -1.0
     return cmd_vel_msg

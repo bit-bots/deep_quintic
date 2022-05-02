@@ -31,6 +31,7 @@ class AbstractSim:
 
     def __init__(self, node):
         self.node = node
+        self.time_step = None
 
     def get_base_velocity(self, robot_index):
         raise NotImplementedError
@@ -134,6 +135,8 @@ class PybulletSim(Simulation, AbstractSim):
 
     def __init__(self, node, gui, terrain_height, robot="wolfgang"):
         AbstractSim.__init__(self, node)
+        # time step should be at 240Hz (due to pyBullet documentation)
+        self.time_step = (1 / 240)
 
         self.node.declare_parameter("simulation_active", True)
         self.node.declare_parameter("contact_stiffness", 0.0)
@@ -213,8 +216,8 @@ class PybulletSim(Simulation, AbstractSim):
 
 class WebotsSim(SupervisorController, AbstractSim):
 
-    def __init__(self, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False):
-        AbstractSim.__init__(self)
+    def __init__(self, node, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False, fast_physics=False):
+        AbstractSim.__init__(self, node)
         self.robot_type = robot
         self.alpha = 0.5
         self.fixed_position = False
@@ -227,9 +230,13 @@ class WebotsSim(SupervisorController, AbstractSim):
             # start webots
             path = get_package_share_directory("wolfgang_webots_sim")
 
+            fast = ""
+            if fast_physics:
+                fast = "_fast"
+
             arguments = ["webots",
                          "--batch",
-                         path + "/worlds/" + world + ".wbt"]
+                         path + "/worlds/" + world + fast + ".wbt"]
             if not gui:
                 arguments.append("--minimize")
                 arguments.append("--no-rendering")
@@ -244,17 +251,18 @@ class WebotsSim(SupervisorController, AbstractSim):
         else:
             mode = 'fast'
         os.environ["WEBOTS_ROBOT_NAME"] = "wolfgang"
-        SupervisorController.__init__(self, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
+        SupervisorController.__init__(self, ros_node=self.node, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
 
         self.pressure_filters = {}
+        self.time_step = self.world_info.getField("basicTimeStep").getSFFloat() / 1000.0
         # compute frequency based on timestep which is represented in ms
-        self.simulator_freq = 1000 / self.world_info.getField("basicTimeStep").getSFFloat()
+        self.simulator_freq = 1 / self.time_step
 
         # this is currently only a solution for this case and could be made more generic
         # webots does not allow to have more than one robot controller from a python process.
         # Therefore we only create a controller for the actual robot and handle the refbot differently by directly
         # accessing the nodes
-        self.robot_controller = RobotController(ros_active=False, robot=self.robot_type, do_ros_init=False,
+        self.robot_controller = RobotController(ros_node=self.node, ros_active=False, robot=self.robot_type,
                                                 robot_node=self.supervisor, base_ns='', recognize=False,
                                                 camera_active=False)
 

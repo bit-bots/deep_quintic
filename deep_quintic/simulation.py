@@ -6,8 +6,6 @@ import time
 from abc import ABC
 import pybullet as p
 import numpy as np
-import rospkg
-import rospy
 import transforms3d.axangles
 try:
     #this import is from webots not from the controller python package. if the controller package is installed it will also fail!
@@ -19,17 +17,21 @@ from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
 from wolfgang_pybullet_sim.simulation import Simulation
 
 from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
+from ament_index_python import get_package_share_directory
+from ros2param.api import load_parameter_file
+
 
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
 except:
-    rospy.logerr("Could not load webots sim. If you want to use it, source the setenvs.sh")
+    print("Could not load webots sim. If you want to use it, source the setenvs.sh")
 
 
 class AbstractSim:
 
-    def __init__(self):
-        pass
+    def __init__(self, node):
+        self.node = node
+        self.time_step = None
 
     def get_base_velocity(self, robot_index):
         raise NotImplementedError
@@ -131,15 +133,26 @@ class AbstractSim:
 
 class PybulletSim(Simulation, AbstractSim):
 
-    def __init__(self, gui, terrain_height, robot="wolfgang"):
-        AbstractSim.__init__(self)
+    def __init__(self, node, gui, terrain_height, robot="wolfgang"):
+        AbstractSim.__init__(self, node)
+        # time step should be at 240Hz (due to pyBullet documentation)
+        self.time_step = (1 / 240)
+
+        self.node.declare_parameter("simulation_active", True)
+        self.node.declare_parameter("contact_stiffness", 0.0)
+        self.node.declare_parameter("joint_damping", 0.0)
+        self.node.declare_parameter("spinning_friction", 0.0)
+        self.node.declare_parameter("contact_damping", 0.0)
+        self.node.declare_parameter("lateral_friction", 0.0)
+        self.node.declare_parameter("rolling_friction", 0.0)
+        self.node.declare_parameter("cutoff", 0)
+        self.node.declare_parameter("order", 0)
+        # load simulation params
+        load_parameter_file(node=self.node, node_name=self.node.get_name(),
+                            parameter_file=f'{get_package_share_directory("wolfgang_pybullet_sim")}/config/config.yaml', use_wildcard=True)
         Simulation.__init__(self, gui, urdf_path=None, terrain_height=terrain_height, field=False, robot=robot,
                             load_robot=False)
 
-        # load simuation params
-        rospack = rospkg.RosPack()
-        # print(self.namespace)
-        load_yaml_to_param("", 'wolfgang_pybullet_sim', '/config/config.yaml', rospack)
         self.gui = gui
         if self.gui:
             p.configureDebugVisualizer(p.COV_ENABLE_GUI, True)
@@ -203,8 +216,8 @@ class PybulletSim(Simulation, AbstractSim):
 
 class WebotsSim(SupervisorController, AbstractSim):
 
-    def __init__(self, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False):
-        AbstractSim.__init__(self)
+    def __init__(self, node, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False, fast_physics=False):
+        AbstractSim.__init__(self, node)
         self.robot_type = robot
         self.alpha = 0.5
         self.fixed_position = False
@@ -215,12 +228,15 @@ class WebotsSim(SupervisorController, AbstractSim):
 
         if start_webots:
             # start webots
-            rospack = rospkg.RosPack()
-            path = rospack.get_path("wolfgang_webots_sim")
+            path = get_package_share_directory("wolfgang_webots_sim")
+
+            fast = ""
+            if fast_physics:
+                fast = "_fast"
 
             arguments = ["webots",
                          "--batch",
-                         path + "/worlds/" + world + ".wbt"]
+                         path + "/worlds/" + world + fast + ".wbt"]
             if not gui:
                 arguments.append("--minimize")
                 arguments.append("--no-rendering")
@@ -235,17 +251,18 @@ class WebotsSim(SupervisorController, AbstractSim):
         else:
             mode = 'fast'
         os.environ["WEBOTS_ROBOT_NAME"] = "wolfgang"
-        SupervisorController.__init__(self, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
+        SupervisorController.__init__(self, ros_node=self.node, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
 
         self.pressure_filters = {}
+        self.time_step = self.world_info.getField("basicTimeStep").getSFFloat() / 1000.0
         # compute frequency based on timestep which is represented in ms
-        self.simulator_freq = 1000 / self.world_info.getField("basicTimeStep").getSFFloat()
+        self.simulator_freq = 1 / self.time_step
 
         # this is currently only a solution for this case and could be made more generic
         # webots does not allow to have more than one robot controller from a python process.
         # Therefore we only create a controller for the actual robot and handle the refbot differently by directly
         # accessing the nodes
-        self.robot_controller = RobotController(ros_active=False, robot=self.robot_type, do_ros_init=False,
+        self.robot_controller = RobotController(ros_node=self.node, ros_active=False, robot=self.robot_type,
                                                 robot_node=self.supervisor, base_ns='', recognize=False,
                                                 camera_active=False)
 

@@ -1,21 +1,21 @@
-# THIS IS A MAGIC IMPORT WHICH FIXES A "terminate called after throwing an instance of 'std::bad_cast'" ERROR
-from torch import nn as nn
+import rcl_interfaces.msg
+import rclpy
+from ament_index_python import get_package_share_directory
+from bitbots_moveit_bindings import set_moveit_parameters
+from bitbots_moveit_bindings.libbitbots_moveit_bindings import initRos
+from rclpy.node import Node
 
 import numpy as np
 from bitbots_msgs.msg import FootPressure
 from geometry_msgs.msg import Twist
 from numpy import random
 import gym
-import rospkg
 from sensor_msgs.msg import Imu
 
 from transforms3d.euler import quat2euler
 
 from deep_quintic.engine import WalkEngine
 from stable_baselines3.common.env_checker import check_env
-
-from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
-from bitbots_quintic_walk import PyWalk
 
 from deep_quintic.butter_filter import ButterFilter
 from deep_quintic.ros_debug_interface import ROSDebugInterface
@@ -30,6 +30,41 @@ from deep_quintic.simulation import WebotsSim, PybulletSim
 from deep_quintic.state import CartesianState, JointSpaceState, PhaseState, BaseState
 from deep_quintic.trajectory import Trajectory
 from deep_quintic.utils import Rot
+from ros2param.api import parse_parameter_dict
+import os
+import yaml
+from rcl_interfaces.msg import Parameter as ParameterMsg
+from rcl_interfaces.msg import ParameterValue as ParameterValueMsg
+
+
+def get_parameters_from_ros_yaml(node_name, parameter_file, use_wildcard):
+    # Remove leading slash and namespaces
+    with open(parameter_file, 'r') as f:
+        param_file = yaml.safe_load(f)
+        param_keys = []
+        if use_wildcard and '/**' in param_file:
+            param_keys.append('/**')
+        if node_name in param_file:
+            param_keys.append(node_name)
+
+        if param_keys == []:
+            raise RuntimeError('Param file does not contain parameters for {}, '
+                               ' only for nodes: {}'.format(node_name, param_file.keys()))
+        param_dict = {}
+        for k in param_keys:
+            value = param_file[k]
+            if type(value) != dict or 'ros__parameters' not in value:
+                raise RuntimeError('Invalid structure of parameter file for node {}'
+                                   'expected same format as provided by ros2 param dump'
+                                   .format(k))
+            param_dict.update(value['ros__parameters'])
+        return parse_parameter_dict(namespace='', parameter_dict=param_dict)
+
+
+def get_parameters_from_plain_yaml(parameter_file, namespace=''):
+    with open(parameter_file, 'r') as f:
+        param_dict = yaml.safe_load(f)
+        return parse_parameter_dict(namespace=namespace, parameter_dict=param_dict)
 
 
 class DeepQuinticEnv(gym.Env):
@@ -47,7 +82,8 @@ class DeepQuinticEnv(gym.Env):
                  state_type="full", cyclic_phase=True, rot_type='rpy', filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
-                 adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True) -> None:
+                 adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
+                 node: Node = None) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -57,6 +93,7 @@ class DeepQuinticEnv(gym.Env):
         @param trajectory_file: file containing reference trajectory. without the environment will not use it
         @param early_termination: if episode should be terminated early when robot falls
         """
+        self.node = node
         self.gui = gui
         self.ros_debug = ros_debug
         self.cartesian_state = cartesian_state
@@ -70,7 +107,6 @@ class DeepQuinticEnv(gym.Env):
         self.filter_actions = filter_actions
         self.terrain_height = terrain_height
         self.phase_in_state = phase_in_state
-        self.step_freq = step_freq
         self.randomize = randomize
         self.use_complementary_filter = use_complementary_filter
         self.random_head_movement = random_head_movement
@@ -119,66 +155,90 @@ class DeepQuinticEnv(gym.Env):
         self.render_width = 800
         self.render_height = 600
 
-        self.time = 0
-        # time step should be at 240Hz (due to pyBullet documentation)
-        self.sim_timestep = (1 / 240)
-        # How many simulation steps have to be done per policy step
-        self.sim_steps = int((1 / self.sim_timestep) / step_freq)
-        # length of one step in env
-        self.env_timestep = 1 / step_freq
-        # ep_length_in_s is in seconds, compute how many steps this is
-        self.max_episode_steps = ep_length_in_s * step_freq
-        DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
-
         # Instantiating Simulation
         if "_off" in simulator_type:
             simulator_type = simulator_type[:-4]
             self.sim = None
         else:
             if simulator_type == "webots":
-                self.sim = WebotsSim(self.gui, start_webots=True)
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True)
             elif simulator_type == "webots_extern":
-                self.sim = WebotsSim(self.gui)
+                self.sim = WebotsSim(self.node, self.gui)
+            elif simulator_type == "webots_fast":
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True, fast_physics=True)
             elif simulator_type == "pybullet":
-                self.sim = PybulletSim(self.gui, self.terrain_height)
+                self.sim = PybulletSim(self.node, self.gui, self.terrain_height)
+
+        self.time = 0
+        # How many simulation steps have to be done per policy step
+        self.sim_steps = int((1 / self.sim.time_step) / step_freq)
+        # since we can only do full sim steps, actual step freq might be different than requested one
+        self.step_freq = 1 / (self.sim_steps * self.sim.time_step)
+        # length of one step in env
+        self.env_timestep = self.sim_steps * self.sim.time_step
+        # ep_length_in_s is in seconds, compute how many steps this is
+        self.max_episode_steps = ep_length_in_s * step_freq
+        DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
+
+        print(f"sim timestep {self.sim.time_step}")
+        print(f"sim_steps {self.sim_steps}")
+        print(f"requests env_timestep {1 / step_freq}")
+        print(f"actual env_timestep {self.env_timestep}")
+        print(f"requests freq {step_freq}")
+        print(f"actual freq {self.step_freq}")
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (
             isinstance(self.reward_function, CartesianStateVelReward)) or (
                                 self.cartesian_state and not self.state_type == "base"))
-        self.robot = Robot(simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
+        # load moveit parameters for IK calls later
+        moveit_parameters = get_parameters_from_plain_yaml(
+            f"{get_package_share_directory('wolfgang_moveit_config')}/config/kinematics.yaml",
+            "robot_description_kinematics.")
+        robot_description = ParameterMsg()
+        robot_description.name = "robot_description"
+        value = os.popen(
+            f"xacro {get_package_share_directory('wolfgang_description')}/urdf/robot.urdf use_fake_walk:=false sim_ns:=false").read()
+        robot_description.value = ParameterValueMsg(string_value=value,
+                                                    type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
+        moveit_parameters.append(robot_description)
+        robot_description_semantic = ParameterMsg()
+        robot_description_semantic.name = "robot_description_semantic"
+        with open(f"{get_package_share_directory('wolfgang_moveit_config')}/config/wolfgang.srdf", "r") as file:
+            value = file.read()
+            robot_description_semantic.value = ParameterValueMsg(string_value=value,
+                                                                 type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
+        moveit_parameters.append(robot_description_semantic)
+        initRos()  # need to be initialized for the c++ ros2 node
+        set_moveit_parameters(moveit_parameters)
+        self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
                            used_joints=used_joints, physics=True,
                            compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
                            use_complementary_filter=use_complementary_filter)
         if self.gui:
             # the reference bot only needs to be connect to pybullet if we want to display it
-            self.refbot = Robot(simulation=self.sim, used_joints=used_joints)
+            self.refbot = Robot(node, simulation=self.sim, used_joints=used_joints)
             self.refbot.set_alpha(0.5)
         else:
-            self.refbot = Robot(used_joints=used_joints)
+            self.refbot = Robot(node, used_joints=used_joints)
 
         # load trajectory if provided
         self.trajectory = None
         self.engine = None
-        self.current_command_speed = [0, 0, 0]
+        self.current_command_speed = [0.0, 0.0, 0.0]
         self.namespace = ""
         if trajectory_file is not None:
             self.trajectory = Trajectory()
             self.trajectory.load_from_json(trajectory_file)
         elif use_engine:
-            # load robot model to ROS
-            try:
-                rospack = rospkg.RosPack()
-                load_robot_param(self.namespace, rospack, "wolfgang")
-            except ConnectionRefusedError:
-                print("### Start roscore! ###")
-                exit(1)
             # load walking params
             sim_name = simulator_type
-            if sim_name == "webots_extern":
+            if sim_name in ["webots_extern", "webots_fast"]:
                 sim_name = "webots"
-            load_yaml_to_param(self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{sim_name}.yaml", rospack)
-            self.engine = WalkEngine(self.namespace)
+            walk_parameters = get_parameters_from_ros_yaml("walking",
+                                                           f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
+                                                           use_wildcard=True)
+            self.engine = WalkEngine(self.namespace, walk_parameters + moveit_parameters)
             self.engine_freq = self.engine.get_freq()
         else:
             print("Warning: Neither trajectory nor engine provided")
@@ -235,7 +295,7 @@ class DeepQuinticEnv(gym.Env):
 
         # add publisher if ROS debug is active
         if self.ros_debug:
-            self.ros_interface = ROSDebugInterface(self, init_node=True)
+            self.ros_interface = ROSDebugInterface(self)
 
         # run check after everything is initialized
         if False and self.ros_debug:
@@ -369,13 +429,13 @@ class DeepQuinticEnv(gym.Env):
                     *self.action_buffer[3]]
 
     def step_simulation(self):
-        self.time += self.sim_timestep
+        self.time += self.sim.time_step
         self.sim.step()
         # filters need to be done each step to have a high frequency
         if self.foot_sensors_type == "filtered":
             self.robot.step_pressure_filters()
         if self.use_complementary_filter:
-            self.robot.update_complementary_filter(self.sim_timestep)
+            self.robot.update_complementary_filter(self.sim.time_step)
 
     def step_trajectory(self):
         # step the trajectory further, based on the time
@@ -560,7 +620,7 @@ class DeepQuinticEnv(gym.Env):
             return self.num_actions * [0]
         else:
             # reset the engine to start of step and compute refbot accordingly
-            self.engine.special_reset("START_MOVEMENT", 0, cmd_vel_to_twist((0, 0, 0), True), True)
+            self.engine.special_reset("START_MOVEMENT", 0.0, cmd_vel_to_twist((0.0, 0.0, 0.0), True), True)
             self.refbot_compute_next_step(0.0001)
             self.refbot.step()
             self.refbot.solve_ik_exactly()
@@ -568,7 +628,7 @@ class DeepQuinticEnv(gym.Env):
             if self.adaptive_phase:
                 # just use the normal fixed timestep as initial value for the timestep but scale it to [-1, 1]
                 time_of_single_step = 0.5 / self.engine_freq
-                action_mu.append((self.env_timestep/time_of_single_step) *2 - 1)
+                action_mu.append((self.env_timestep / time_of_single_step) * 2 - 1)
             return action_mu
 
     def _seed(self, seed=None):
@@ -590,14 +650,14 @@ class DeepQuinticEnv(gym.Env):
 
 def cmd_vel_to_twist(cmd_vel, stop=False):
     cmd_vel_msg = Twist()
-    cmd_vel_msg.linear.x = cmd_vel[0]
-    cmd_vel_msg.linear.y = cmd_vel[1]
-    cmd_vel_msg.linear.z = 0
-    cmd_vel_msg.angular.x = 0
-    cmd_vel_msg.angular.y = 0
-    cmd_vel_msg.angular.z = cmd_vel[2]
+    cmd_vel_msg.linear.x = float(cmd_vel[0])
+    cmd_vel_msg.linear.y = float(cmd_vel[1])
+    cmd_vel_msg.linear.z = 0.0
+    cmd_vel_msg.angular.x = 0.0
+    cmd_vel_msg.angular.y = 0.0
+    cmd_vel_msg.angular.z = float(cmd_vel[2])
     if stop:
-        cmd_vel_msg.angular.x = -1
+        cmd_vel_msg.angular.x = -1.0
     return cmd_vel_msg
 
 
@@ -609,7 +669,13 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True):
+                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None):
+        if node is None:
+            rclpy.init()
+            node_name = 'walking_env'
+            node = Node(node_name)
+
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -621,4 +687,5 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
-                                adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro, use_imu_orientation=use_imu_orientation)
+                                adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
+                                use_imu_orientation=use_imu_orientation, node=node)

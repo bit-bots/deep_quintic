@@ -1,6 +1,7 @@
 import random
 import math
-import rospy
+import rclpy
+from rclpy.node import Node
 import numpy as np
 
 from transforms3d.quaternions import quat2mat, rotate_vector, qinverse, qmult, mat2quat
@@ -9,7 +10,7 @@ from transforms3d.euler import quat2euler, euler2quat
 
 from bitbots_moveit_bindings import get_position_ik, get_position_fk
 from bitbots_msgs.msg import FootPressure
-from moveit_msgs.srv import GetPositionFKRequest
+from moveit_msgs.srv import GetPositionFK
 from sensor_msgs.msg import JointState, Imu
 from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
 
@@ -20,8 +21,9 @@ from deep_quintic.utils import compute_imu_orientation_from_world, wxyz2xyzw, xy
 
 
 class Robot:
-    def __init__(self, simulation: AbstractSim = None, compute_joints=False, compute_feet=False, used_joints="Legs",
-                 physics=False, compute_smooth_vel=False, use_complementary_filter=True):
+    def __init__(self, node: Node, simulation: AbstractSim = None, compute_joints=False, compute_feet=False,
+                 used_joints="Legs", physics=False, compute_smooth_vel=False, use_complementary_filter=True):
+        self.node = node
         self.physics_active = physics
         self.sim = simulation
         self.compute_joints = compute_joints
@@ -448,13 +450,13 @@ class Robot:
     def solve_fk(self, force=False):
         # only solve if necessary
         if self.left_foot_pos is None or self.right_foot_pos is None or force:
-            request = GetPositionFKRequest()
+            request = GetPositionFK.Request()
             for i in range(len(self.leg_joints)):
                 # todo this only works when we just use only the legs
                 request.robot_state.joint_state.name.append(self.leg_joints[i])
                 request.robot_state.joint_state.position.append(self.joint_positions[i])
             request.fk_link_names = ['l_sole', 'r_sole']
-            result = get_position_fk(request)  # type: GetPositionFKResponse
+            result = get_position_fk(request)  # type: GetPositionFK.Response
             l_sole = result.pose_stamped[result.fk_link_names.index('l_sole')].pose
             self.left_foot_pos = np.array([l_sole.position.x, l_sole.position.y, l_sole.position.z])
             l_sole_quat = l_sole.orientation
@@ -655,21 +657,23 @@ class Robot:
     def get_imu_msg(self):
         imu_quat = euler2quat(*self.imu_rpy, axes='sxyz')
         # change to ros standard
-        self.imu_msg.orientation = Quaternion(*wxyz2xyzw(imu_quat))
-        self.imu_msg.angular_velocity = Vector3(*self.imu_ang_vel)
-        self.imu_msg.linear_acceleration = Vector3(*self.imu_lin_acc)
+        quat = wxyz2xyzw(imu_quat)
+        self.imu_msg.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+        self.imu_msg.angular_velocity = Vector3(x=self.imu_ang_vel[0], y=self.imu_ang_vel[1], z=self.imu_ang_vel[2])
+        self.imu_msg.linear_acceleration = Vector3(x=self.imu_lin_acc[0], y=self.imu_lin_acc[1], z=self.imu_lin_acc[2])
         return self.imu_msg
 
     def get_pose_msg(self):
         msg = PoseStamped()
-        msg.header.stamp = rospy.Time.now()
-        msg.pose.position = Point(*self.pos_in_world)
-        msg.pose.orientation = Quaternion(*wxyz2xyzw(self.quat_in_world))
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.pose.position = Point(x=self.pos_in_world[0], y=self.pos_in_world[1], z=self.pos_in_world[2])
+        quat = wxyz2xyzw(self.quat_in_world)
+        msg.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
         return msg
 
     def get_joint_state_msg(self, stamped=False):
         if stamped:
-            self.joint_state_msg.header.stamp = rospy.Time.now()
+            self.joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
         if self.joint_positions is None:
             self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
                 self.used_joint_names, self.robot_index)
@@ -681,11 +685,17 @@ class Robot:
         return self.joint_state_msg
 
     def get_left_foot_msg(self):
-        self.left_foot_msg.pose = Pose(Point(*self.left_foot_pos), Quaternion(*wxyz2xyzw(self.left_foot_quat)))
+        quat = wxyz2xyzw(self.left_foot_quat)
+        self.left_foot_msg.pose = Pose(
+            position=Point(x=self.left_foot_pos[0], y=self.left_foot_pos[1], z=self.left_foot_pos[2]),
+            orientation=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]))
         return self.left_foot_msg
 
     def get_right_foot_msg(self):
-        self.right_foot_msg.pose = Pose(Point(*self.right_foot_pos), Quaternion(*wxyz2xyzw(self.right_foot_quat)))
+        quat = wxyz2xyzw(self.right_foot_quat)
+        self.right_foot_msg.pose = Pose(
+            position=Point(x=self.right_foot_pos[0], y=self.right_foot_pos[1], z=self.right_foot_pos[2]),
+            orientation=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]))
         return self.right_foot_msg
 
     def get_pressure(self, left, filtered, time=True):
@@ -701,7 +711,7 @@ class Robot:
         self.pressure_msg.right_front = self.sim.get_sensor_force(names[2], filtered, self.robot_index)
         self.pressure_msg.right_back = self.sim.get_sensor_force(names[3], filtered, self.robot_index)
         if time:
-            self.pressure_msg.header.stamp = rospy.Time.now()
+            self.pressure_msg.header.stamp = self.node.get_clock().now().to_msg()
         return self.pressure_msg
 
     def set_alpha(self, alpha):

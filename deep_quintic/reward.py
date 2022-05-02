@@ -1,8 +1,8 @@
 from abc import ABC
 import math
 import numpy as np
-import rospy
-from moveit_msgs.srv import GetPositionFKRequest
+import rclpy
+from moveit_msgs.srv import GetPositionFK
 from pyquaternion import Quaternion
 from std_msgs.msg import Float32
 from transforms3d.euler import quat2euler
@@ -22,8 +22,8 @@ class AbstractReward(ABC):
         self.env = env
         self.episode_reward = 0
         self.current_reward = 0
-        self.publisher = rospy.Publisher("Reward_" + self.name, Float32, queue_size=1)
-        self.episode_publisher = rospy.Publisher("Reward_" + self.name + "_episode", Float32, queue_size=1)
+        self.publisher = self.env.node.create_publisher(Float32, "Reward_" + self.name, 1)
+        self.episode_publisher = self.env.node.create_publisher(Float32, "Reward_" + self.name + "_episode", 1)
 
     def reset_episode_reward(self):
         self.episode_reward = 0
@@ -35,10 +35,10 @@ class AbstractReward(ABC):
         return self.name
 
     def publish_reward(self):
-        if self.publisher.get_num_connections() > 0:
-            self.publisher.publish(Float32(self.current_reward))
-        if self.episode_publisher.get_num_connections() > 0:
-            self.episode_publisher.publish(Float32(self.episode_reward))
+        if self.publisher.get_subscription_count() > 0:
+            self.publisher.publish(Float32(data=self.current_reward))
+        if self.episode_publisher.get_subscription_count() > 0:
+            self.episode_publisher.publish(Float32(data=self.episode_reward))
 
     def compute_reward(self):
         print("not implemented, this is abstract")
@@ -79,10 +79,10 @@ class CombinedReward(AbstractReward):
         return info
 
     def publish_reward(self):
-        if self.publisher.get_num_connections() > 0:
-            self.publisher.publish(Float32(self.current_reward))
-        if self.episode_publisher.get_num_connections() > 0:
-            self.episode_publisher.publish(Float32(self.episode_reward))
+        if self.publisher.get_subscription_count() > 0:
+            self.publisher.publish(Float32(data=self.current_reward))
+        if self.episode_publisher.get_subscription_count() > 0:
+            self.episode_publisher.publish(Float32(data=self.episode_reward))
         for reward in self.reward_classes:
             reward.publish_reward()
 
@@ -342,12 +342,12 @@ class IKErrorReward(AbstractReward):
     def compute_reward(self):
         # gives reward based on the size of the IK error for the current action.
         # this can be helpful to avoid wrong actions and as debug
-        request = GetPositionFKRequest()
+        request = GetPositionFK.Request()
         for i in range(len(self.env.robot.leg_joints)):
             request.robot_state.joint_state.name.append(self.env.robot.leg_joints[i])
             request.robot_state.joint_state.position.append(self.env.robot.last_ik_result[i])
         request.fk_link_names = ['l_sole', 'r_sole']
-        result = get_position_fk(request)  # type: GetPositionFKResponse
+        result = get_position_fk(request)  # type: GetPositionFK.Response
         l_sole = result.pose_stamped[result.fk_link_names.index('l_sole')].pose
         fk_left_foot_pos = np.array([l_sole.position.x, l_sole.position.y, l_sole.position.z])
         l_sole_quat = l_sole.orientation
@@ -570,7 +570,7 @@ class JointPositionActionReward(AbstractReward):
     def compute_reward(self):
         # the reference was already stepped when computing the reward therefore we use the current values not the next
         if self.env.cartesian_action:
-            print("DeepMimicActionReward does not work with cartesian action")
+            print("JointPositionActionReward does not work with cartesian action")
             exit(0)
         elif self.env.last_leg_action is None:
             # necessary to survive env_check()

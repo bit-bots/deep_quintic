@@ -1,3 +1,4 @@
+# this import is somehow necessary so that the PyWalk import works
 from bitbots_moveit_bindings import libbitbots_moveit_bindings
 from bitbots_quintic_walk_py.py_walk import PyWalk
 

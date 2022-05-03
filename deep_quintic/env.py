@@ -30,41 +30,7 @@ from deep_quintic.simulation import WebotsSim, PybulletSim
 from deep_quintic.state import CartesianState, JointSpaceState, PhaseState, BaseState
 from deep_quintic.trajectory import Trajectory
 from deep_quintic.utils import Rot
-from ros2param.api import parse_parameter_dict
-import os
-import yaml
-from rcl_interfaces.msg import Parameter as ParameterMsg
-from rcl_interfaces.msg import ParameterValue as ParameterValueMsg
-
-
-def get_parameters_from_ros_yaml(node_name, parameter_file, use_wildcard):
-    # Remove leading slash and namespaces
-    with open(parameter_file, 'r') as f:
-        param_file = yaml.safe_load(f)
-        param_keys = []
-        if use_wildcard and '/**' in param_file:
-            param_keys.append('/**')
-        if node_name in param_file:
-            param_keys.append(node_name)
-
-        if param_keys == []:
-            raise RuntimeError('Param file does not contain parameters for {}, '
-                               ' only for nodes: {}'.format(node_name, param_file.keys()))
-        param_dict = {}
-        for k in param_keys:
-            value = param_file[k]
-            if type(value) != dict or 'ros__parameters' not in value:
-                raise RuntimeError('Invalid structure of parameter file for node {}'
-                                   'expected same format as provided by ros2 param dump'
-                                   .format(k))
-            param_dict.update(value['ros__parameters'])
-        return parse_parameter_dict(namespace='', parameter_dict=param_dict)
-
-
-def get_parameters_from_plain_yaml(parameter_file, namespace=''):
-    with open(parameter_file, 'r') as f:
-        param_dict = yaml.safe_load(f)
-        return parse_parameter_dict(namespace=namespace, parameter_dict=param_dict)
+from bitbots_utils.utils import load_moveit_parameter, get_parameters_from_ros_yaml
 
 
 class DeepQuinticEnv(gym.Env):
@@ -192,23 +158,7 @@ class DeepQuinticEnv(gym.Env):
             isinstance(self.reward_function, CartesianStateVelReward)) or (
                                 self.cartesian_state and not self.state_type == "base"))
         # load moveit parameters for IK calls later
-        moveit_parameters = get_parameters_from_plain_yaml(
-            f"{get_package_share_directory('wolfgang_moveit_config')}/config/kinematics.yaml",
-            "robot_description_kinematics.")
-        robot_description = ParameterMsg()
-        robot_description.name = "robot_description"
-        value = os.popen(
-            f"xacro {get_package_share_directory('wolfgang_description')}/urdf/robot.urdf use_fake_walk:=false sim_ns:=false").read()
-        robot_description.value = ParameterValueMsg(string_value=value,
-                                                    type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
-        moveit_parameters.append(robot_description)
-        robot_description_semantic = ParameterMsg()
-        robot_description_semantic.name = "robot_description_semantic"
-        with open(f"{get_package_share_directory('wolfgang_moveit_config')}/config/wolfgang.srdf", "r") as file:
-            value = file.read()
-            robot_description_semantic.value = ParameterValueMsg(string_value=value,
-                                                                 type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING)
-        moveit_parameters.append(robot_description_semantic)
+        moveit_parameters = load_moveit_parameter("wolfgang")
         initRos()  # need to be initialized for the c++ ros2 node
         set_moveit_parameters(moveit_parameters)
         self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,

@@ -36,7 +36,6 @@ from deep_quintic import WolfgangWalkEnv
 from deep_quintic.robot import Robot
 from deep_quintic.state import CartesianState, BaseState
 from deep_quintic.utils import Rot, compute_ik
-from parallel_parameter_search.utils import load_yaml_to_param
 from deep_quintic.reward import CartesianActionReward
 
 ALGOS = {

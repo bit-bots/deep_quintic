@@ -13,7 +13,6 @@ try:
 except:
     print("Keyboard package from webots not found. Only pybullet sim will work")
 from nav_msgs.msg import Odometry
-from parallel_parameter_search.utils import load_robot_param, load_yaml_to_param
 from wolfgang_pybullet_sim.simulation import Simulation
 
 from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw

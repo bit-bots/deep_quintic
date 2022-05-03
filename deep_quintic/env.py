@@ -645,7 +645,7 @@ class DeepQuinticEnv(gym.Env):
                                    self.camera_yaw, self.robot.pos_in_world)
 
     def close(self):
-        pass  # self.pybullet_client.disconnect()
+        self.sim.close()
 
 
 def cmd_vel_to_twist(cmd_vel, stop=False):

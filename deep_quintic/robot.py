@@ -389,9 +389,10 @@ class Robot:
 
     def reset_to_reference(self, refbot: "Robot", randomize, additional_height=0):
         self.pose_on_episode_start = (refbot.pos_in_world, refbot.quat_in_world)
+        print(f"refbot quat {refbot.quat_in_world}")
         self.pose_on_episode_start[0][2] += additional_height
         self.sim.reset_base_position_and_orientation(self.pose_on_episode_start[0],
-                                                     self.pose_on_episode_start[1], self.robot_index, )
+                                                     self.pose_on_episode_start[1], self.robot_index)
         self.sim.reset_base_velocity(refbot.lin_vel, refbot.ang_vel, self.robot_index)
         # set all joints to initial position since they can be modified from last fall
         self.sim.reset_joints_to_init_pos(self.robot_index)
@@ -407,6 +408,7 @@ class Robot:
             vel = (refbot.joint_positions[i] - refbot.previous_joint_positions[i]) / (
                     refbot.time - refbot.previous_time)
             joint_pos = refbot.joint_positions[i]
+            print(f"joint pos {joint_pos}")
             if randomize:
                 joint_pos = random.uniform(-0.1, 0.1) + joint_pos
             self.sim.reset_joint_to_position(joint_name, joint_pos, vel, self.robot_index)

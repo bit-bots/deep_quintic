@@ -131,6 +131,9 @@ class AbstractSim:
     def get_imu_lin_acc(self):
         raise NotImplementedError
 
+    def close(self):
+        raise NotImplementedError
+
 class PybulletSim(Simulation, AbstractSim):
 
     def __init__(self, node, gui, terrain_height, robot="wolfgang"):
@@ -212,6 +215,9 @@ class PybulletSim(Simulation, AbstractSim):
         rgb_array = np.array(px)
         rgb_array = rgb_array[:, :, :3]
         return rgb_array
+
+    def close(self):
+        pass
 
 
 class WebotsSim(SupervisorController, AbstractSim):
@@ -469,6 +475,10 @@ class WebotsSim(SupervisorController, AbstractSim):
     def get_imu_lin_acc(self):
         return self.robot_controller.accel.getValues()
 
+    def close(self):
+        self.sim_proc.terminate()
+        self.sim_proc.wait()
+        self.sim_proc.kill()
 
 class WebotsPressureFilter:
     def __init__(self, simulation_freq, cutoff=10, order=5):

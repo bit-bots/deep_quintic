@@ -8,7 +8,8 @@ from std_msgs.msg import Float32
 from transforms3d.euler import quat2euler
 
 from bitbots_moveit_bindings import get_position_fk
-from deep_quintic.utils import compute_imu_orientation_from_world, Rot
+from deep_quintic.utils import Rot
+from bitbots_utils.transforms import compute_imu_orientation_from_world
 
 from typing import TYPE_CHECKING
 

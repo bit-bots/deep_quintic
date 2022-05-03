@@ -16,8 +16,8 @@ from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
 
 from deep_quintic.complementary_filter import ComplementaryFilter
 from deep_quintic.simulation import AbstractSim, PybulletSim
-from deep_quintic.utils import Rot, fused2quat, sixd2quat, quat2fused, quat2sixd, compute_ik
-from deep_quintic.utils import compute_imu_orientation_from_world, wxyz2xyzw, xyzw2wxyz
+from deep_quintic.utils import Rot, compute_ik
+from bitbots_utils.transforms import fused2quat, sixd2quat, quat2fused, quat2sixd, wxyz2xyzw, xyzw2wxyz, compute_imu_orientation_from_world
 
 
 class Robot:
@@ -389,7 +389,6 @@ class Robot:
 
     def reset_to_reference(self, refbot: "Robot", randomize, additional_height=0):
         self.pose_on_episode_start = (refbot.pos_in_world, refbot.quat_in_world)
-        print(f"refbot quat {refbot.quat_in_world}")
         self.pose_on_episode_start[0][2] += additional_height
         self.sim.reset_base_position_and_orientation(self.pose_on_episode_start[0],
                                                      self.pose_on_episode_start[1], self.robot_index)
@@ -408,7 +407,6 @@ class Robot:
             vel = (refbot.joint_positions[i] - refbot.previous_joint_positions[i]) / (
                     refbot.time - refbot.previous_time)
             joint_pos = refbot.joint_positions[i]
-            print(f"joint pos {joint_pos}")
             if randomize:
                 joint_pos = random.uniform(-0.1, 0.1) + joint_pos
             self.sim.reset_joint_to_position(joint_name, joint_pos, vel, self.robot_index)

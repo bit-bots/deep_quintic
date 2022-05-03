@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 
 from transforms3d.euler import euler2quat, quat2euler
 
-from deep_quintic.utils import Rot, wxyz2xyzw, quat2fused, quat2sixd
+from deep_quintic.utils import Rot
+from bitbots_utils.transforms import wxyz2xyzw, quat2fused, quat2sixd
 
 if TYPE_CHECKING:
     from deep_quintic import DeepQuinticEnv

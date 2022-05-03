@@ -15,7 +15,7 @@ except:
 from nav_msgs.msg import Odometry
 from wolfgang_pybullet_sim.simulation import Simulation
 
-from deep_quintic.utils import xyzw2wxyz, wxyz2xyzw
+from bitbots_utils.transforms import xyzw2wxyz, wxyz2xyzw
 from ament_index_python import get_package_share_directory
 from ros2param.api import load_parameter_file
 

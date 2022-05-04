@@ -367,7 +367,7 @@ class Robot:
         alive = alive and z > self.get_start_height()
         # angle of the robot in roll and pitch not to far from zero
         rpy = quat2euler(self.quat_in_world)
-        alive = alive and abs(rpy[0] < math.tau / 4) and abs(rpy[1] < math.tau / 4)
+        alive = alive and abs(rpy[0]) < math.tau / 4 and abs(rpy[1]) < math.tau / 4
         return alive
 
     def reset(self):

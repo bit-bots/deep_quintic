@@ -1,6 +1,7 @@
 import math
 import os
 from scipy import signal
+import signal as sig
 import subprocess
 import time
 from abc import ABC
@@ -475,9 +476,10 @@ class WebotsSim(SupervisorController, AbstractSim):
         return self.robot_controller.accel.getValues()
 
     def close(self):
-        self.sim_proc.terminate()
-        self.sim_proc.wait()
-        self.sim_proc.kill()
+        os.killpg(os.getpgid(self.sim_proc.pid), sig.SIGTERM)
+        #self.sim_proc.terminate()
+        #self.sim_proc.wait()
+        #self.sim_proc.kill()
 
 class WebotsPressureFilter:
     def __init__(self, simulation_freq, cutoff=10, order=5):

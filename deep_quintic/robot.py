@@ -361,13 +361,12 @@ class Robot:
 
     def is_alive(self):
         alive = True
-        (x, y, z), _, _, _ = self.sim.get_link_values("head", self.robot_index)
-
+        #(x, y, z), _, _, _ = self.sim.get_link_values("head", self.robot_index)
         # head higher than starting position of body
-        alive = alive and z > self.get_start_height()
+        #alive = alive and z > self.get_start_height()
         # angle of the robot in roll and pitch not to far from zero
         rpy = quat2euler(self.quat_in_world)
-        alive = alive and abs(rpy[0] < math.tau / 4) and abs(rpy[1] < math.tau / 4)
+        alive = alive and abs(rpy[0] < math.tau / 8) and abs(rpy[1] < math.tau / 8)
         return alive
 
     def reset(self):

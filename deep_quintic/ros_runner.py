@@ -3,7 +3,11 @@
 import math
 import time
 
+from ament_index_python import get_package_share_directory
+from bitbots_utils.utils import get_parameters_from_ros_yaml
 from humanoid_league_msgs.msg import RobotControlState
+from parallel_parameter_search.utils import load_yaml_to_param
+from rclpy.duration import Duration
 
 import deep_quintic
 import argparse
@@ -94,9 +98,13 @@ class ExecuteEnv(WolfgangWalkEnv):
         # additional class variables we need since we are not running the walking at the same time
         self.refbot.phase = 0
         self.last_time = None
-        load_yaml_to_param(self.node, self.namespace, "bitbots_quintic_walk", f"/config/deep_quintic_{simulator_type}.yaml")
-        self.freq = self.node.get_parameter("/walking/engine/freq")
-
+        walk_parameters = get_parameters_from_ros_yaml("walking",
+                                                       f"{get_package_share_directory('bitbots_quintic_walk')}"
+                                                       f"/config/deep_quintic_{simulator_type}.yaml",
+                                                       use_wildcard=True)
+        for parameter in walk_parameters:
+            if parameter.name == "engine.freq":
+                self.freq = parameter.value.double_value
         # todo we dont initialize action filter correctly. history is empty
 
         # initialize ROS stuff
@@ -116,8 +124,8 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.support_publisher = self.node.create_publisher(Phase, 'walk_support_state', 1)
         self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
                                                                        1)
-        self.imu_sub = self.node.create_subscription(Imu, 'imu/data', self.imu_cb, 1)
-        self.joint_state_sub = self.node.create_subscription(JointState, 'joint_states', self.joint_state_cb, 1)
+        self.imu_sub = self.node.create_subscription(Imu, '/imu/data', self.imu_cb, 1)
+        self.joint_state_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 1)
         self.robot_state_sub = self.node.create_subscription(RobotControlState, 'robot_state', self.robot_state_cb, 1)
         if foot_sensors_type == "filtered":
             self.left_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_left/filtered',
@@ -135,26 +143,29 @@ class ExecuteEnv(WolfgangWalkEnv):
             print(f"Problem: use foot sensors is {foot_sensors_type}")
             exit()
 
-        urdf = URDF.from_xml_string(self.node.get_parameter('robot_description'))
-        self.joint_limits = {
-            joint.name: (joint.limit.lower, joint.limit.upper) for joint in urdf.joints if joint.limit
-        }
+        # urdf = URDF.from_xml_string(self.node.get_parameter('robot_description'))
+        # self.joint_limits = {
+        #    joint.name: (joint.limit.lower, joint.limit.upper) for joint in urdf.joints if joint.limit
+        # }
 
         # see that we got all data from the various subscribers
+        for i in range(5):
+            rclpy.spin_once(self.node)
         while self.current_joint_positions is None or self.ang_vel is None or not self.got_foot_pressure:
-            self.node.get_logger().info("throttle_duration_sec", throttle_duration_sec=10)
-            time.sleep(1)
+            self.node.get_logger().info("Waiting for data from subscribers", throttle_duration_sec=10)
+            time.sleep(0.01)
+            rclpy.spin_once(self.node)
 
     def apply_action(self, action):
         # only do something if we are not stopped
         if not self.is_stopped:
             action = self.action_filter.filter(action)
             msg = JointCommand()
-            msg.header.stamp = self.node.get_clock().now()
+            msg.header.stamp = self.node.get_clock().now().to_msg()
             msg.joint_names = self.robot.used_joint_names
-            msg.velocities = [-1] * len(self.robot.used_joint_names)
-            msg.accelerations = [-1] * len(self.robot.used_joint_names)
-            msg.max_currents = [-1] * len(self.robot.used_joint_names)
+            msg.velocities = [-1.0] * len(self.robot.used_joint_names)
+            msg.accelerations = [-1.0] * len(self.robot.used_joint_names)
+            msg.max_currents = [-1.0] * len(self.robot.used_joint_names)
             if self.cartesian_action:
                 left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
                     self.robot.scale_action_to_pose(action, Rot.RPY)
@@ -170,11 +181,11 @@ class ExecuteEnv(WolfgangWalkEnv):
 
             # support state is necessary for odometry
             msg = Phase()
-            msg.header.stamp = self.node.get_clock().now()
+            msg.header.stamp = self.node.get_clock().now().to_msg()
             if self.refbot.phase > 0.5:
-                msg.state = Phase.LEFT_STANCE
+                msg.phase = Phase.LEFT_STANCE
             else:
-                msg.state = Phase.RIGHT_STANCE
+                msg.phase = Phase.RIGHT_STANCE
             # todo we are not detecting double support state
             # msg.state = SupportState.DOUBLE
             self.support_publisher.publish(msg)
@@ -196,7 +207,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 # need to have two states updates first so that the previous positions are set for velocity computation
                 return None
         # calc velocities
-        time = self.node.get_clock().now().to_sec()
+        time = self.node.get_clock().now().nanoseconds / 1e9
         if self.last_time is None:
             self.last_time = time - 0.001
         time_diff = time - self.last_time
@@ -264,6 +275,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         # self.ang_vel = [0,0,0]
 
     def foot_pressure_cb(self, msg: FootPressure, is_left: bool):
+        print("foot_pressure_cb")
         self.got_foot_pressure = True
         # LLB, LLF, LRF, LRB, RLB, RLF, RRF, RRB
         pressures = [msg.left_back, msg.left_front, msg.right_front, msg.right_back]
@@ -289,10 +301,10 @@ class ExecuteEnv(WolfgangWalkEnv):
 
     def run_node(self, model, venv):
         rate = self.step_freq
-        r = self.node.create_rate(rate)
         state = None
         # start main loop
         while rclpy.ok():
+            next_sleep = self.node.get_clock().now() + Duration(seconds=1.0 / rate)
             if self.robot_state == RobotControlState.WALKING or (
                     self.robot_state == RobotControlState.CONTROLLABLE and (
                     not self.current_command_speed == (0, 0, 0) or not self.is_stopped)):
@@ -306,7 +318,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 self.last_action = action
                 self.apply_action(action)
                 # progress phase and compute current state
-                time = self.node.get_clock().now().to_sec()
+                time = self.node.get_clock().now().nanoseconds / 1.0e9
                 self.progress_phase(time, action)
                 self.ros_interface.publish_action()
             else:
@@ -316,11 +328,12 @@ class ExecuteEnv(WolfgangWalkEnv):
 
             self.state.publish_debug()
 
-            try:
-                r.sleep()
-            except:
-                # ignore errors from moving backwards in time
-                pass
+            #todo improve this, maybe complete asynch spin?
+            # need to spin for multiple subscribers
+            for i in range(5):
+                rclpy.spin_once(self.node)
+
+            self.node.get_clock().sleep_until(next_sleep)
 
 
 class StoreDict(argparse.Action):
@@ -435,7 +448,11 @@ def create_test_env(
                 env.training = False
                 env.norm_reward = False
             else:
-                raise ValueError(f"VecNormalize stats {path_} not found")
+                print(f"VecNormalize stats {path_} not found")
+                exit(1)
+        else:
+            print("normalize param is False. There is probably something wrong")
+            exit(1)
 
         n_stack = hyperparams.get("frame_stack", 0)
         if n_stack > 0:

@@ -277,6 +277,9 @@ class WebotsSim(SupervisorController, AbstractSim):
 
         self.refbot_node = self.robot_nodes["refbot"]
 
+        # get reference for self.camera
+        self.camera = self.supervisor.getFromDef("free_camera")
+
     def add_robot(self, physics_active=True):
         # robots are already added in __init__()
         if not physics_active:
@@ -418,21 +421,20 @@ class WebotsSim(SupervisorController, AbstractSim):
         return self.fixed_position
 
     def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
-        # todo get reference for self.camera
         if not self.free_camera_active:
             self.camera.enable(30)
             self.free_camera_active = True
-        name = "free_camera"
-        camera_node = self.robot_nodes[name]
-        robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
-        camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
-                                                                                                  camera_yaw)
-        self.translation_fields[name].setSFVec3f(list(camera_pos))
-        axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
-        self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
+        #name = "free_camera"
+        #camera_node = self.robot_nodes[name]
+        #robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
+        #camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
+        #                                                                                          camera_yaw)
+        #self.translation_fields[name].setSFVec3f(list(camera_pos))
+        #axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
+        #self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
 
-        camera_node.getField("cameraWidth").setSFFloat(render_width)
-        camera_node.getField("cameraHeight").setSFFloat(render_height)
+        #camera_node.getField("cameraWidth").setSFFloat(render_width)
+        #camera_node.getField("cameraHeight").setSFFloat(render_height)
 
         return self.camera.getImage()
 

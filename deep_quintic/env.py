@@ -136,22 +136,31 @@ class DeepQuinticEnv(gym.Env):
                 self.sim = PybulletSim(self.node, self.gui, self.terrain_height)
 
         self.time = 0
-        # How many simulation steps have to be done per policy step
-        self.sim_steps = int((1 / self.sim.time_step) / step_freq)
-        # since we can only do full sim steps, actual step freq might be different than requested one
-        self.step_freq = 1 / (self.sim_steps * self.sim.time_step)
-        # length of one step in env
-        self.env_timestep = self.sim_steps * self.sim.time_step
+        if self.sim is not None:
+            # How many simulation steps have to be done per policy step
+            self.sim_steps = int((1 / self.sim.time_step) / step_freq)
+            # since we can only do full sim steps, actual step freq might be different than requested one
+            self.step_freq = 1 / (self.sim_steps * self.sim.time_step)
+            # length of one step in env
+            self.env_timestep = self.sim_steps * self.sim.time_step
+            print(f"sim timestep {self.sim.time_step}")
+            print(f"sim_steps {self.sim_steps}")
+            print(f"requests env_timestep {1 / step_freq}")
+            print(f"actual env_timestep {self.env_timestep}")
+            print(f"requests freq {step_freq}")
+            print(f"actual freq {self.step_freq}")
+        else:
+            # for ros runner just set time so that it matches the required frequency
+            self.sim_steps = 0
+            self.step_freq = step_freq
+            self.env_timestep = 1 / step_freq
+
+
         # ep_length_in_s is in seconds, compute how many steps this is
         self.max_episode_steps = ep_length_in_s * step_freq
         DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
 
-        print(f"sim timestep {self.sim.time_step}")
-        print(f"sim_steps {self.sim_steps}")
-        print(f"requests env_timestep {1 / step_freq}")
-        print(f"actual env_timestep {self.env_timestep}")
-        print(f"requests freq {step_freq}")
-        print(f"actual freq {self.step_freq}")
+
 
         # create real robot + reference robot which is only to display ref trajectory
         compute_feet = (isinstance(self.reward_function, CartesianReward) or (

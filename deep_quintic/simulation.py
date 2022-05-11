@@ -8,8 +8,9 @@ from abc import ABC
 import pybullet as p
 import numpy as np
 import transforms3d.axangles
+
 try:
-    #this import is from webots not from the controller python package. if the controller package is installed it will also fail!
+    # this import is from webots not from the controller python package. if the controller package is installed it will also fail!
     from controller import Keyboard
 except:
     print("Keyboard package from webots not found. Only pybullet sim will work")
@@ -19,7 +20,6 @@ from wolfgang_pybullet_sim.simulation import Simulation
 from bitbots_utils.transforms import xyzw2wxyz, wxyz2xyzw
 from ament_index_python import get_package_share_directory
 from ros2param.api import load_parameter_file
-
 
 try:
     from wolfgang_webots_sim.webots_robot_supervisor_controller import SupervisorController, RobotController
@@ -134,9 +134,10 @@ class AbstractSim:
     def close(self):
         raise NotImplementedError
 
+
 class PybulletSim(Simulation, AbstractSim):
 
-    def __init__(self, node, gui, terrain_height, robot="wolfgang"):
+    def __init__(self, node, gui, terrain_height, robot_type="wolfgang"):
         AbstractSim.__init__(self, node)
         # time step should be at 240Hz (due to pyBullet documentation)
         self.time_step = (1 / 240)
@@ -152,8 +153,9 @@ class PybulletSim(Simulation, AbstractSim):
         self.node.declare_parameter("order", 0)
         # load simulation params
         load_parameter_file(node=self.node, node_name=self.node.get_name(),
-                            parameter_file=f'{get_package_share_directory("wolfgang_pybullet_sim")}/config/config.yaml', use_wildcard=True)
-        Simulation.__init__(self, gui, urdf_path=None, terrain_height=terrain_height, field=False, robot=robot,
+                            parameter_file=f'{get_package_share_directory("wolfgang_pybullet_sim")}/config/config.yaml',
+                            use_wildcard=True)
+        Simulation.__init__(self, gui, urdf_path=None, terrain_height=terrain_height, field=False, robot=robot_type,
                             load_robot=False)
 
         self.gui = gui
@@ -222,15 +224,17 @@ class PybulletSim(Simulation, AbstractSim):
 
 class WebotsSim(SupervisorController, AbstractSim):
 
-    def __init__(self, node, gui, robot="wolfgang", world="deep_quintic_wolfgang", start_webots=False, fast_physics=False):
+    def __init__(self, node, gui, robot_type=None, world="", start_webots=False, fast_physics=False):
         AbstractSim.__init__(self, node)
-        self.robot_type = robot
+        self.robot_type = robot_type
         self.alpha = 0.5
         self.fixed_position = False
         self.show_refbot = True
         self.free_camera_active = False
         self.command_vel = [0.1, 0, 0]
         self.velocity_warning_printed = False
+        if world == "":
+            world = f"deep_quintic_{robot_type}"
 
         if start_webots:
             # start webots
@@ -256,8 +260,9 @@ class WebotsSim(SupervisorController, AbstractSim):
             mode = 'normal'
         else:
             mode = 'fast'
-        os.environ["WEBOTS_ROBOT_NAME"] = "wolfgang"
-        SupervisorController.__init__(self, ros_node=self.node, ros_active=False, mode=mode, base_ns='/', model_states_active=False)
+        os.environ["WEBOTS_ROBOT_NAME"] = "lernbot"
+        SupervisorController.__init__(self, ros_node=self.node, ros_active=False, mode=mode, base_ns='/',
+                                      model_states_active=False, robot=self.robot_type)
 
         self.pressure_filters = {}
         self.time_step = self.world_info.getField("basicTimeStep").getSFFloat() / 1000.0
@@ -285,7 +290,7 @@ class WebotsSim(SupervisorController, AbstractSim):
         if not physics_active:
             name = 'refbot'
         else:
-            name = 'wolfgang'
+            name = 'lernbot'
         return name
 
     def get_base_velocity(self, robot_index):
@@ -332,13 +337,16 @@ class WebotsSim(SupervisorController, AbstractSim):
     def set_alpha(self, alpha, robot_index=1):
         if robot_index != "refbot":
             raise NotImplementedError
-        self.robot_nodes["refbot"].getField("transparency").setSFFloat(alpha)
+        transparency_field = self.robot_nodes["refbot"].getField("transparency")
+        # not all robot models can be set to transparent
+        if transparency_field is not None:
+            transparency_field.setSFFloat(alpha)
 
     def reset_joints_to_init_pos(self, robot_index=1):
         # to a webots based reset first, there could be an issue with one of the joints
         self.reset_robot_init(robot_index)
-        for name in self.robot_controller.initial_joint_positions.keys():
-            self.reset_joint_to_position(name, math.radians(self.robot_controller.initial_joint_positions[name]),
+        for name in self.initial_joint_positions.keys():
+            self.reset_joint_to_position(name, math.radians(self.initial_joint_positions[name]),
                                          velocity=0, robot_index=robot_index)
 
     def reset_base_position_and_orientation(self, pos, quat, robot_index=1):
@@ -352,7 +360,11 @@ class WebotsSim(SupervisorController, AbstractSim):
         # we directly reset the joint position, not the PID controlled motor
         # get the joint from the defined robot by using the weird webots syntax
         # joint_name = self.robot_controller.external_motor_names_to_motor_names[joint_name]
-        self.joint_nodes[robot_index][joint_name].setJointPosition(pos_in_rad)
+        joint_node = self.joint_nodes[robot_index][joint_name]
+        if joint_node is None:
+            print(f"Joint {joint_name} not found in robot {robot_index}. Can not set position")
+        else:
+            joint_node.setJointPosition(pos_in_rad)
         if velocity != 0 and not self.velocity_warning_printed:
             print("Resetting a joint to a specific velocity is not possible in Webots. Will only set Position.")
             self.velocity_warning_printed = True
@@ -421,20 +433,21 @@ class WebotsSim(SupervisorController, AbstractSim):
         return self.fixed_position
 
     def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
+        print("get render")
         if not self.free_camera_active:
             self.camera.enable(30)
             self.free_camera_active = True
-        #name = "free_camera"
-        #camera_node = self.robot_nodes[name]
-        #robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
-        #camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
+        # name = "free_camera"
+        # camera_node = self.robot_nodes[name]
+        # robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
+        # camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
         #                                                                                          camera_yaw)
-        #self.translation_fields[name].setSFVec3f(list(camera_pos))
-        #axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
-        #self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
+        # self.translation_fields[name].setSFVec3f(list(camera_pos))
+        # axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
+        # self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
 
-        #camera_node.getField("cameraWidth").setSFFloat(render_width)
-        #camera_node.getField("cameraHeight").setSFFloat(render_height)
+        # camera_node.getField("cameraWidth").setSFFloat(render_width)
+        # camera_node.getField("cameraHeight").setSFFloat(render_height)
 
         return self.camera.getImage()
 
@@ -479,9 +492,10 @@ class WebotsSim(SupervisorController, AbstractSim):
 
     def close(self):
         os.killpg(os.getpgid(self.sim_proc.pid), sig.SIGTERM)
-        #self.sim_proc.terminate()
-        #self.sim_proc.wait()
-        #self.sim_proc.kill()
+        # self.sim_proc.terminate()
+        # self.sim_proc.wait()
+        # self.sim_proc.kill()
+
 
 class WebotsPressureFilter:
     def __init__(self, simulation_freq, cutoff=10, order=5):

@@ -17,18 +17,21 @@ from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
 from deep_quintic.complementary_filter import ComplementaryFilter
 from deep_quintic.simulation import AbstractSim, PybulletSim
 from deep_quintic.utils import Rot, compute_ik
-from bitbots_utils.transforms import fused2quat, sixd2quat, quat2fused, quat2sixd, wxyz2xyzw, xyzw2wxyz, compute_imu_orientation_from_world
+from bitbots_utils.transforms import fused2quat, sixd2quat, quat2fused, quat2sixd, wxyz2xyzw, xyzw2wxyz, \
+    compute_imu_orientation_from_world
 
 
 class Robot:
     def __init__(self, node: Node, simulation: AbstractSim = None, compute_joints=False, compute_feet=False,
-                 used_joints="Legs", physics=False, compute_smooth_vel=False, use_complementary_filter=True):
+                 used_joints="Legs", physics=False, compute_smooth_vel=False, use_complementary_filter=True,
+                 robot_type=None):
         self.node = node
         self.physics_active = physics
         self.sim = simulation
         self.compute_joints = compute_joints
         self.compute_feet = compute_feet
         self.compute_smooth_vel = compute_smooth_vel
+        self.robot_type = robot_type
 
         self.pos_on_episode_start = [0, 0, 0.43]
         self.quat_on_episode_start = euler2quat(0, 0.25, 0)
@@ -105,21 +108,69 @@ class Robot:
         self.relative_scaling_cartesian_action_pos = 0.05
         self.relative_scaling_cartesian_action_ori = math.tau / 24
 
-        self.initial_joint_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
-                                        "LHipYaw": 0, "LKnee": 60, "RAnklePitch": 30, "RAnkleRoll": 0,
-                                        "RHipPitch": -30, "RHipRoll": 0, "RHipYaw": 0, "RKnee": -60,
-                                        "LShoulderPitch": 75, "LShoulderRoll": 0, "LElbow": 36,
-                                        "RShoulderPitch": -75, "RShoulderRoll": 0, "RElbow": -36, "HeadPan": 0,
-                                        "HeadTilt": 0}
+        if self.robot_type == "wolfgang":
+            self.initial_joint_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
+                                            "LHipYaw": 0, "LKnee": 60, "RAnklePitch": 30, "RAnkleRoll": 0,
+                                            "RHipPitch": -30, "RHipRoll": 0, "RHipYaw": 0, "RKnee": -60,
+                                            "LShoulderPitch": 75, "LShoulderRoll": 0, "LElbow": 36,
+                                            "RShoulderPitch": -75, "RShoulderRoll": 0, "RElbow": -36, "HeadPan": 0,
+                                            "HeadTilt": 0}
 
-        self.leg_joints = ["LAnklePitch", "LAnkleRoll", "LHipPitch", "LHipRoll", "LHipYaw", "LKnee",
-                           "RAnklePitch", "RAnkleRoll", "RHipPitch", "RHipRoll", "RHipYaw", "RKnee"]
+            self.leg_joints = ["LAnklePitch", "LAnkleRoll", "LHipPitch", "LHipRoll", "LHipYaw", "LKnee",
+                               "RAnklePitch", "RAnkleRoll", "RHipPitch", "RHipRoll", "RHipYaw", "RKnee"]
+            self.head_pan_name = "HeadPan"
+            self.head_tilt_name = "HeadTilt"
+            self.additional_ref_height = 0
+        elif self.robot_type == "op3":
+            self.initial_joint_positions = {"r_sho_pitch": 135, "l_sho_pitch": -135,
+                                         "r_sho_roll": 90, "l_sho_roll": -90,
+                                         "r_el": 140, "l_el": -140, "r_hip_yaw": 0,
+                                         "l_hip_yaw": 0, "r_hip_roll": 0, "l_hip_roll": 0,
+                                         "r_hip_pitch": 0, "l_hip_pitch": 0, "r_knee": 0, "l_knee": 0, "r_ank_pitch": 0,
+                                         "l_ank_pitch": 0, "r_ank_roll": 0, "l_ank_roll": 0, "head_pan": 0,
+                                         "head_tilt": 0}
+            self.leg_joints = ["l_hip_yaw", "r_hip_roll", "l_hip_roll", "r_hip_pitch", "l_hip_pitch", "r_knee",
+                               "l_knee", "r_ank_pitch", "l_ank_pitch", "r_ank_roll", "l_ank_roll"]
+            self.head_pan_name = "head_pan"
+            self.head_tilt_name = "head_tilt"                            
+            self.additional_ref_height = 0
+        elif self.robot_type == "rfc":
+            self.initial_joint_positions = {"LeftFootPitch": 0, "LeftFootRoll": 0, "LeftHipPitch": 0, "LeftHipRoll": 0,
+                                            "LeftHipYaw": 0, "LeftKnee": 0, "RightFootPitch": 0, "RightFootRoll": 0,
+                                            "RightHipPitch": 0, "RightHipRoll": 0, "RightHipYaw": 0, "RightKnee": 0,
+                                            "LeftShoulderPitch": 45, "LeftShoulderRoll": 0, "LeftElbow": -90,
+                                            "RightShoulderPitch": -45, "RightShoulderRoll": 0, "RightElbow": 90, "HeadYaw": 0,
+                                            "HeadPitch": 0}
+            self.leg_joints = ["LeftFootPitch", "LeftFootRoll", "LeftHipPitch", "LeftHipRoll", "LeftHipYaw", "LeftKnee",
+                               "RightFootPitch", "RightFootRoll", "RightHipPitch", "RightHipRoll", "RightHipYaw", "RightKnee"]                                           
+            self.head_pan_name = "HeadYaw"
+            self.head_tilt_name = "HeadPitch"  
+            self.additional_ref_height = 0
+        elif self.robot_type == "chape":
+            self.initial_joint_positions = {"rightShoulderPitch":75.58, "leftShoulderPitch":75.27, "rightShoulderYaw":75.58, 
+                                            "leftShoulderYaw":-75.58, "rightElbowYaw":160, "leftElbowYaw":-160,
+                                            "rightHipYaw":0, "leftHipYaw":0, "rightHipRoll":0, "leftHipRoll":0,
+                                            "rightHipPitch":0, "leftHipPitch":0, "rightKneePitch":0, "leftKneePitch":0,
+                                            "rightAnklePitch":0, "leftAnklePitch":0, "rightAnkleRoll":0, "leftAnkleRoll":0, 
+                                            "neckYaw":0, "neckPitch":0}
+            self.leg_joints = ["rightHipYaw", "leftHipYaw", "rightHipRoll", "leftHipRoll",
+                               "rightHipPitch", "leftHipPitch", "rightKneePitch", "leftKneePitch",
+                               "rightAnklePitch", "leftAnklePitch", "rightAnkleRoll", "leftAnkleRoll"]
+            self.head_pan_name = "neckYaw"                               
+            self.head_tilt_name = "neckPitch"
+            self.additional_ref_height = 0.1
+        else:
+            print(f"No joints specified for robot type {self.robot_type}")
+            exit()
+
         if used_joints == "Legs":
             self.used_joint_names = self.leg_joints
         elif used_joints == "LegsAndArms":
+            #todo generalize
             self.used_joint_names = self.leg_joints + ["LShoulderPitch", "LShoulderRoll", "LElbow", "RShoulderPitch",
                                                        "RShoulderRoll", "RElbow"]
         elif used_joints == "All":
+            #todo generalize
             self.used_joint_names = self.leg_joints + ["LShoulderPitch", "LShoulderRoll", "LElbow", "RShoulderPitch",
                                                        "RShoulderRoll", "RElbow", "HeadPan", "HeadTilt"]
         else:
@@ -361,9 +412,9 @@ class Robot:
 
     def is_alive(self):
         alive = True
-        #(x, y, z), _, _, _ = self.sim.get_link_values("head", self.robot_index)
+        # (x, y, z), _, _, _ = self.sim.get_link_values("head", self.robot_index)
         # head higher than starting position of body
-        #alive = alive and z > self.get_start_height()
+        # alive = alive and z > self.get_start_height()
         # angle of the robot in roll and pitch not to far from zero
         rpy = quat2euler(self.quat_in_world)
         alive = alive and abs(rpy[0]) < math.tau / 8 and abs(rpy[1]) < math.tau / 8
@@ -721,6 +772,6 @@ class Robot:
 
     def set_random_head_goals(self):
         pan = random.uniform(-1, 1)
-        self.sim.set_joint_position("HeadPan", pan, scaled=True, relative=False, robot_index=self.robot_index)
+        self.sim.set_joint_position(self.head_pan_name, pan, scaled=True, relative=False, robot_index=self.robot_index)
         tilt = random.uniform(-1, 1)
-        self.sim.set_joint_position("HeadTilt", tilt, scaled=True, relative=False, robot_index=self.robot_index)
+        self.sim.set_joint_position(self.head_tilt_name, tilt, scaled=True, relative=False, robot_index=self.robot_index)

@@ -49,7 +49,7 @@ class DeepQuinticEnv(gym.Env):
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
                  adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
-                 node: Node = None) -> None:
+                 node: Node = None, robot_type = None) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -81,6 +81,7 @@ class DeepQuinticEnv(gym.Env):
         self.leg_vel_in_state = leg_vel_in_state
         self.use_gyro = use_gyro
         self.use_imu_orientation = use_imu_orientation
+        self.robot_type = robot_type
 
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
@@ -127,13 +128,13 @@ class DeepQuinticEnv(gym.Env):
             self.sim = None
         else:
             if simulator_type == "webots":
-                self.sim = WebotsSim(self.node, self.gui, start_webots=True)
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True, robot_type=self.robot_type)
             elif simulator_type == "webots_extern":
-                self.sim = WebotsSim(self.node, self.gui)
+                self.sim = WebotsSim(self.node, self.gui, robot_type=self.robot_type)
             elif simulator_type == "webots_fast":
-                self.sim = WebotsSim(self.node, self.gui, start_webots=True, fast_physics=True)
+                self.sim = WebotsSim(self.node, self.gui, start_webots=True, fast_physics=True, robot_type=self.robot_type)
             elif simulator_type == "pybullet":
-                self.sim = PybulletSim(self.node, self.gui, self.terrain_height)
+                self.sim = PybulletSim(self.node, self.gui, self.terrain_height, robot_type=self.robot_type)
 
         self.time = 0
         if self.sim is not None:
@@ -167,19 +168,19 @@ class DeepQuinticEnv(gym.Env):
             isinstance(self.reward_function, CartesianStateVelReward)) or (
                                 self.cartesian_state and not self.state_type == "base"))
         # load moveit parameters for IK calls later
-        moveit_parameters = load_moveit_parameter("wolfgang")
+        moveit_parameters = load_moveit_parameter(self.robot_type)
         initRos()  # need to be initialized for the c++ ros2 node
         set_moveit_parameters(moveit_parameters)
         self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
                            used_joints=used_joints, physics=True,
                            compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
-                           use_complementary_filter=use_complementary_filter)
+                           use_complementary_filter=use_complementary_filter, robot_type=self.robot_type)
         if self.gui:
             # the reference bot only needs to be connect to pybullet if we want to display it
-            self.refbot = Robot(node, simulation=self.sim, used_joints=used_joints)
+            self.refbot = Robot(node, simulation=self.sim, used_joints=used_joints, robot_type=self.robot_type)
             self.refbot.set_alpha(0.5)
         else:
-            self.refbot = Robot(node, used_joints=used_joints)
+            self.refbot = Robot(node, used_joints=used_joints, robot_type=self.robot_type)
 
         # load trajectory if provided
         self.trajectory = None
@@ -195,7 +196,7 @@ class DeepQuinticEnv(gym.Env):
             if sim_name in ["webots_extern", "webots_fast"]:
                 sim_name = "webots"
             walk_parameters = get_parameters_from_ros_yaml("walking",
-                                                           f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}.yaml",
+                                                           f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}_{self.robot_type}.yaml",
                                                            use_wildcard=True)
             self.engine = WalkEngine(self.namespace, walk_parameters + moveit_parameters)
             self.engine_freq = self.engine.get_freq()
@@ -422,8 +423,9 @@ class DeepQuinticEnv(gym.Env):
                                       self.robot.get_joint_state_msg(), left_pressure, right_pressure)
         phase = self.engine.get_phase()
         odom_msg = self.engine.get_odom()
+        # position needs to be adapted in z axis for some robots due to models not following REP-120 base link pos
         position = np.array(
-            [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z])
+            [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z + self.refbot.additional_ref_height])
         orientation = np.array(
             [odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y,
              odom_msg.pose.pose.orientation.z,
@@ -629,7 +631,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
-                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None):
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang"):
         if node is None:
             rclpy.init()
             node_name = 'walking_env'
@@ -647,4 +649,4 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
-                                use_imu_orientation=use_imu_orientation, node=node)
+                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type)

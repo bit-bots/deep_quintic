@@ -85,28 +85,7 @@ class Robot:
         self.complementary_filter = None
         if use_complementary_filter:
             self.complementary_filter = ComplementaryFilter()
-        self.last_ik_result = None
-
-        # how the foot pos and rpy are scaled. from [-1:1] action to meaningful m or rad
-        # foot goal is relative to the start of the leg, so that 0 would be the center of possible poses
-        # x, y, z, roll, pitch, yaw
-        self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
-                                      (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
-        # right is same just y pos is inverted
-        self.cartesian_limits_right = self.cartesian_limits_left.copy()
-        self.cartesian_limits_right[1] = (-self.cartesian_limits_left[1][1], -self.cartesian_limits_left[1][0])
-        # compute mid_positions of limits just once now, to use them later
-        self.cartesian_mid_positions_left = []
-        self.cartesian_mid_positions_right = []
-        for i in range(6):
-            self.cartesian_mid_positions_left.append(
-                0.5 * (self.cartesian_limits_left[i][0] + self.cartesian_limits_left[i][1]))
-            self.cartesian_mid_positions_right.append(
-                0.5 * (self.cartesian_limits_right[i][0] + self.cartesian_limits_right[i][1]))
-
-        self.relative_scaling_joint_action = 0.1
-        self.relative_scaling_cartesian_action_pos = 0.05
-        self.relative_scaling_cartesian_action_ori = math.tau / 24
+        self.last_ik_result = None        
 
         if self.robot_type == "wolfgang":
             self.initial_joint_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
@@ -120,7 +99,17 @@ class Robot:
                                "RAnklePitch", "RAnkleRoll", "RHipPitch", "RHipRoll", "RHipYaw", "RKnee"]
             self.head_pan_name = "HeadPan"
             self.head_tilt_name = "HeadTilt"
-            self.additional_ref_height = 0
+            # due to the soft floor the robot is actually in the ground            
+            self.additional_ref_height = 0.0           
+            # how the foot pos and rpy are scaled. from [-1:1] action to meaningful m or rad
+            # foot goal is relative to the start of the leg, so that 0 would be the center of possible poses
+            # x, y, z, roll, pitch, yaw
+            self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
+                                        (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.relative_scaling_joint_action = 0.1
+            self.relative_scaling_cartesian_action_pos = 0.05
+            self.relative_scaling_cartesian_action_ori = math.tau / 24      
+            self.cmd_vel_max_bounds = [(-0.5, 0.5), (-0.25, 0.25), (-2.0, 2.0), 0.51]                                                          
         elif self.robot_type == "op3":
             self.initial_joint_positions = {"r_sho_pitch": 135, "l_sho_pitch": -135,
                                          "r_sho_roll": 90, "l_sho_roll": -90,
@@ -134,6 +123,10 @@ class Robot:
             self.head_pan_name = "head_pan"
             self.head_tilt_name = "head_tilt"                            
             self.additional_ref_height = 0
+            # todo tune
+            self.cartesian_limits_left = [(-0.12, 0.2), (0, 0.2), (-0.25, -0.15), (-math.tau / 12, math.tau / 12),
+                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.cmd_vel_max_bounds = [(-0.54, 0.45), (-0.13, 0.13), (-2.01, 2.01), 0.54]                                                                                                      
         elif self.robot_type == "rfc":
             self.initial_joint_positions = {"LeftFootPitch": 0, "LeftFootRoll": 0, "LeftHipPitch": 0, "LeftHipRoll": 0,
                                             "LeftHipYaw": 0, "LeftKnee": 0, "RightFootPitch": 0, "RightFootRoll": 0,
@@ -146,6 +139,9 @@ class Robot:
             self.head_pan_name = "HeadYaw"
             self.head_tilt_name = "HeadPitch"  
             self.additional_ref_height = 0
+            self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.36, -0.26), (-math.tau / 12, math.tau / 12),
+                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.cmd_vel_max_bounds = [(-0.40, 0.37), (-0.36, 0.13), (-1.99, 1.99), 0.40]                                                                                                                  
         elif self.robot_type == "chape":
             self.initial_joint_positions = {"rightShoulderPitch":75.58, "leftShoulderPitch":75.27, "rightShoulderYaw":75.58, 
                                             "leftShoulderYaw":-75.58, "rightElbowYaw":160, "leftElbowYaw":-160,
@@ -159,9 +155,25 @@ class Robot:
             self.head_pan_name = "neckYaw"                               
             self.head_tilt_name = "neckPitch"
             self.additional_ref_height = 0.1
+            self.cartesian_limits_left = [(-0.1, 0.15), (0, 0.15), (-0.28, -0.16), (-math.tau / 12, math.tau / 12),
+                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.cmd_vel_max_bounds = [(-0.36, 0.3), (-0.1, 0.1), (-2.09, 2.09), 0.36]
         else:
             print(f"No joints specified for robot type {self.robot_type}")
             exit()
+
+        # right is same just y pos is inverted
+        self.cartesian_limits_right = self.cartesian_limits_left.copy()
+        self.cartesian_limits_right[1] = (-self.cartesian_limits_left[1][1], -self.cartesian_limits_left[1][0])
+        # compute mid_positions of limits just once now, to use them later
+        self.cartesian_mid_positions_left = []
+        self.cartesian_mid_positions_right = []
+        for i in range(6):
+            self.cartesian_mid_positions_left.append(
+                0.5 * (self.cartesian_limits_left[i][0] + self.cartesian_limits_left[i][1]))
+            self.cartesian_mid_positions_right.append(
+                0.5 * (self.cartesian_limits_right[i][0] + self.cartesian_limits_right[i][1]))
+
 
         if used_joints == "Legs":
             self.used_joint_names = self.leg_joints

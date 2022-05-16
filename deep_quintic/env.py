@@ -87,10 +87,7 @@ class DeepQuinticEnv(gym.Env):
         self.rot_type = {'rpy': Rot.RPY,
                          'fused': Rot.FUSED,
                          'sixd': Rot.SIXD,
-                         'quat': Rot.QUAT}[rot_type]
-
-        self.cmd_vel_current_bounds = [(-0.35, 0.35), (-0.2, 0.2), (-1, 1)]
-        self.cmd_vel_max_bounds = [(-0.35, 0.35), (-0.2, 0.2), (-1, 1), 0.35]
+                         'quat': Rot.QUAT}[rot_type]        
 
         self.domain_rand_bounds = {
             # percentages
@@ -185,6 +182,7 @@ class DeepQuinticEnv(gym.Env):
         # load trajectory if provided
         self.trajectory = None
         self.engine = None
+        self.cmd_vel_current_bounds = self.robot.cmd_vel_max_bounds
         self.current_command_speed = [0.0, 0.0, 0.0]
         self.namespace = ""
         if trajectory_file is not None:
@@ -312,20 +310,27 @@ class DeepQuinticEnv(gym.Env):
             # set robot body accordingly
             self.robot.reset_to_reference(self.refbot, self.randomize)
         elif self.engine is not None:
-            # choose random initial state of the engine
-            self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
-                                          random.uniform(*self.cmd_vel_current_bounds[1]),
-                                          random.uniform(*self.cmd_vel_current_bounds[2])]
-            # make sure that the combination of x and y speed is not too low or too high
-            if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.cmd_vel_max_bounds[3]:
+            # choose random initial state of the engine            
+            while True:
+                # take random speed values but check for each if the engine can solve these
+                self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
+                                                random.uniform(*self.cmd_vel_current_bounds[1]),
+                                                random.uniform(*self.cmd_vel_current_bounds[2])]
+                                                                
+                if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
+                    break 
+
+            """# make sure that the combination of x and y speed is not too low or too high
+            if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.robot.cmd_vel_max_bounds[3]:
                 # decrease one of the two
                 direction = 1  # random.randint(0, 2)
                 sign = 1 if self.current_command_speed[direction] > 0 else -1
-                self.current_command_speed[direction] = sign * (abs(self.cmd_vel_max_bounds[3]) - abs(
+                self.current_command_speed[direction] = sign * (abs(self.robot.cmd_vel_max_bounds[3]) - abs(
                     self.current_command_speed[(direction + 1) % 2]))
+            """
 
             # set command vel based on GUI input if appropriate
-            if self.gui:
+            if self.gui and False:
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()
                 if gui_cmd_vel is not None:
                     self.current_command_speed = gui_cmd_vel
@@ -353,7 +358,7 @@ class DeepQuinticEnv(gym.Env):
             else:
                 reset_terrain_height = self.terrain_height
             # set robot to initial pose
-            self.robot.reset_to_reference(self.refbot, self.randomize, reset_terrain_height + 0.02)
+            self.robot.reset_to_reference(self.refbot, self.randomize, reset_terrain_height)
         else:
             # without trajectory we just go to init
             self.robot.reset()
@@ -422,10 +427,14 @@ class DeepQuinticEnv(gym.Env):
             result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
                                       self.robot.get_joint_state_msg(), left_pressure, right_pressure)
         phase = self.engine.get_phase()
-        odom_msg = self.engine.get_odom()
-        # position needs to be adapted in z axis for some robots due to models not following REP-120 base link pos
+        odom_msg = self.engine.get_odom()        
+        # webots simulation has soft floor and reference needs to sink into it a bit
+        simulation_specific_offset = 0        
+        if isinstance(self.sim, WebotsSim):
+            simulation_specific_offset = -0.01
+        # position needs to be adapted in z axis for some robots due to models not following REP-120 base link pos            
         position = np.array(
-            [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z + self.refbot.additional_ref_height])
+            [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z + self.refbot.additional_ref_height + simulation_specific_offset])
         orientation = np.array(
             [odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y,
              odom_msg.pose.pose.orientation.z,

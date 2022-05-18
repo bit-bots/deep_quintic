@@ -283,9 +283,6 @@ class WebotsSim(SupervisorController, AbstractSim):
 
         self.refbot_node = self.robot_nodes["refbot"]
 
-        # get reference for self.camera
-        self.camera = self.supervisor.getFromDef("free_camera")
-
     def add_robot(self, physics_active=True):
         # robots are already added in __init__()
         if not physics_active:
@@ -433,24 +430,26 @@ class WebotsSim(SupervisorController, AbstractSim):
     def is_fixed_position(self):
         return self.fixed_position
 
-    def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):
-        print("get render")
+    def get_render(self, render_width, render_height, camera_distance, camera_pitch, camera_yaw, robot_pos):        
         if not self.free_camera_active:
-            self.camera.enable(30)
+            self.free_camera = self.robot_controller.robot_node.getDevice("free_camera")
+            self.free_camera.enable(30)
             self.free_camera_active = True
-        # name = "free_camera"
-        # camera_node = self.robot_nodes[name]
-        # robot_pos, _ = self.get_base_position_and_orientation(robot_index="robot")
-        # camera_pos = robot_pos + np.array([camera_distance, 0, 0]) * transforms3d.euler.euler2mat(0, camera_pitch,
-        #                                                                                          camera_yaw)
-        # self.translation_fields[name].setSFVec3f(list(camera_pos))
-        # axis, angle = transforms3d.euler.euler2axangle(0, camera_pitch, camera_yaw)
-        # self.rotation_fields[name].setSFRotation(list(np.append(axis, angle)))
 
-        # camera_node.getField("cameraWidth").setSFFloat(render_width)
-        # camera_node.getField("cameraHeight").setSFFloat(render_height)
+        image = self.free_camera.getImage()
+        if image is None:
+            # first image is invalid return black image
+            return np.zeros(shape=(600, 800, 3), dtype=np.uint8)
+        # we get a byte array from the simulation. shape it to a np array that has shape (width, height, color)
+        # reshape from one dimensional vector to image with 4 channels
+        image_array = np.frombuffer(image, dtype=np.uint8)
+        image_reshape = np.reshape(image_array, (self.free_camera.getHeight(), self.free_camera.getWidth(), 4))
+        # cut last channel as alpha has no important value
+        image_reshape = image_reshape[..., :3]
+        # image from simulation is bgr, need rgb
+        image_reshape_rgb = image_reshape[...,::-1]        
+        return image_reshape_rgb
 
-        return self.camera.getImage()
 
     def handle_gui(self):
         key = SupervisorController.handle_gui(self)

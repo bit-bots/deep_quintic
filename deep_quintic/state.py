@@ -24,17 +24,23 @@ class State:
         self.env = env
         self.debug_names = None
         self.debug_publishers = {}
+        self.debug_publishers_unscaled = {}
 
     def publish_debug(self):
-        entries = self.get_state_entries(True)
+        entries_scaled = self.get_state_entries(True)
+        entries_unscaled = self.get_state_entries(False)
         if len(self.debug_publishers.keys()) == 0:
             # initialize publishers
-            for name in entries.keys():
+            for name in entries_scaled.keys():
                 self.debug_publishers[name] = self.env.node.create_publisher(Float32MultiArray, "state_" + name, 1)
-        for entry_name in entries.keys():
+                self.debug_publishers_unscaled[name] = self.env.node.create_publisher(Float32MultiArray, "state_" + name + "_unscaled", 1)
+        for entry_name in entries_scaled.keys():
             publisher = self.debug_publishers[entry_name]
             if publisher.get_subscription_count() > 0:
-                publisher.publish(Float32MultiArray(data=entries[entry_name]))
+                publisher.publish(Float32MultiArray(data=entries_scaled[entry_name]))
+            publisher_unscaled = self.debug_publishers_unscaled[entry_name]
+            if publisher_unscaled.get_subscription_count() > 0:
+                publisher_unscaled.publish(Float32MultiArray(data=entries_unscaled[entry_name]))
 
     def get_state_entries(self, scaled):
         raise NotImplementedError
@@ -171,14 +177,14 @@ class CartesianState(BaseState):
         if self.env.rot_type == Rot.RPY:
             left_rot = quat2euler(self.env.robot.left_foot_quat)
             right_rot = quat2euler(self.env.robot.left_foot_quat)
-            output["left_rot"] = left_rot / np.array(math.tau / 2) if scaled else left_rot
-            output["right_rot"] = right_rot / np.array(math.tau / 2) if scaled else right_rot
+            output["left_rot"] = left_rot / np.array(math.tau / 4) if scaled else left_rot
+            output["right_rot"] = right_rot / np.array(math.tau / 4) if scaled else right_rot
         elif self.env.rot_type == Rot.FUSED:
             # without hemi
             left_rot = quat2fused(self.env.robot.left_foot_quat)[:3]
             right_rot = quat2fused(self.env.robot.left_foot_quat)[:3]
-            output["left_rot"] = left_rot / np.array(math.tau / 2) if scaled else left_rot
-            output["right_rot"] = right_rot / np.array(math.tau / 2) if scaled else right_rot
+            output["left_rot"] = left_rot / np.array(math.tau / 4) if scaled else left_rot
+            output["right_rot"] = right_rot / np.array(math.tau / 4) if scaled else right_rot
         elif self.env.rot_type == Rot.QUAT:
             left_rot = self.env.robot.left_foot_quat
             right_rot = self.env.robot.left_foot_quat

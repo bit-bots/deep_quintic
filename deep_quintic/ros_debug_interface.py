@@ -74,14 +74,14 @@ class ROSDebugInterface:
     def publish_action(self):
         if self.action_publisher.get_subscription_count() > 0:
             action_msg = Float32MultiArray()
-            action_msg.data = self.env.last_action
+            action_msg.data = self.env.last_action.tolist()
             self.action_publisher.publish(action_msg)
 
         if self.action_publisher_not_normalized.get_subscription_count() > 0:
             action_msg = Float32MultiArray()
             left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
                 self.env.robot.scale_action_to_pose(self.env.last_action, self.env.rot_type)
-            action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy])
+            action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
             self.action_publisher_not_normalized.publish(action_msg)
 
     def publish_vels(self):

@@ -27,4 +27,4 @@ class WalkEngine(PyWalk, AbstractEngine):
 
     def __init__(self, namespace, parameters=[]):
         AbstractEngine.__init__(self, namespace, parameters)
-        PyWalk.__init__(self, namespace, parameters)
+        PyWalk.__init__(self, namespace, parameters, True)

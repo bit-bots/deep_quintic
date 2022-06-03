@@ -321,7 +321,7 @@ class Robot:
         if self.compute_joints:
             self.previous_joint_positions = self.joint_positions
             self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
-                self.used_joint_names, self.robot_index)
+                self.used_joint_names, scaled=False, robot_index=self.robot_index)
 
         # foot poses
         if self.compute_feet:
@@ -367,7 +367,7 @@ class Robot:
             if success:
                 i = 0
                 for joint_name in self.leg_joints:
-                    self.sim.set_joint_position(joint_name, ik_result[i], robot_index=self.robot_index)
+                    self.sim.set_joint_position(joint_name, ik_result[i], scaled=False, robot_index=self.robot_index)
                     i += 1
                 return True
             else:
@@ -477,8 +477,8 @@ class Robot:
         self.last_lin_vel = self.lin_vel
 
     def reset_base_to_pose(self, pos, quat):
-        self.sim.reset_base_position_and_orientation(self.robot_index, pos, quat)
-        self.sim.reset_base_velocity(self.robot_index, [0, 0, 0], [0, 0, 0])
+        self.sim.reset_base_position_and_orientation(pos, quat, self.robot_index)
+        self.sim.reset_base_velocity([0, 0, 0], [0, 0, 0], self.robot_index)
 
     def update_ref_in_sim(self):
         self.sim.reset_base_position_and_orientation(self.pos_in_world, self.quat_in_world, self.robot_index)
@@ -738,7 +738,7 @@ class Robot:
             self.joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
         if self.joint_positions is None:
             self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
-                self.used_joint_names, self.robot_index)
+                self.used_joint_names, scaled=False, robot_index=self.robot_index)
         self.joint_state_msg.position = self.joint_positions
         if self.joint_velocities is not None:
             self.joint_state_msg.velocity = self.joint_velocities

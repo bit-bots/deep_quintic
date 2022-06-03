@@ -45,11 +45,13 @@ def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, u
     request.ik_request.pose_stamped.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
     ik_result = get_position_ik(request, approximate=approximate)
     first_error_code = ik_result.error_code.val
-    request.ik_request.group_name = "RightLeg"
-    request.ik_request.pose_stamped.pose.position = Point(x=right_foot_pos[0],y=right_foot_pos[1], z=right_foot_pos[2])
-    quat = wxyz2xyzw(right_foot_quat)
-    request.ik_request.pose_stamped.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
-    ik_result = get_position_ik(request, approximate=approximate)
+    if right_foot_pos is not None and right_foot_quat is not None:
+        # maybe we just want to solve the left leg
+        request.ik_request.group_name = "RightLeg"
+        request.ik_request.pose_stamped.pose.position = Point(x=right_foot_pos[0],y=right_foot_pos[1], z=right_foot_pos[2])
+        quat = wxyz2xyzw(right_foot_quat)
+        request.ik_request.pose_stamped.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+        ik_result = get_position_ik(request, approximate=approximate)
     # check if no solution or collision
     error_codes = [-31]
     success = not (first_error_code in error_codes or ik_result.error_code.val in error_codes)

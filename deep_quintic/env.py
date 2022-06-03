@@ -167,7 +167,7 @@ class DeepQuinticEnv(gym.Env):
         # load moveit parameters for IK calls later
         moveit_parameters = load_moveit_parameter(self.robot_type)
         initRos()  # need to be initialized for the c++ ros2 node
-        set_moveit_parameters(moveit_parameters)
+        set_moveit_parameters(moveit_parameters, type="ikfk")
         self.robot = Robot(node, simulation=self.sim, compute_joints=True, compute_feet=compute_feet,
                            used_joints=used_joints, physics=True,
                            compute_smooth_vel=isinstance(self.reward_function, SmoothCartesianActionVelReward),
@@ -426,6 +426,8 @@ class DeepQuinticEnv(gym.Env):
                 right_pressure = self.robot.get_pressure(left=False, filtered=True, time=False)
             result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
                                       self.robot.get_joint_state_msg(), left_pressure, right_pressure)
+        if self.ros_debug:
+            self.engine.publish_debug()
         phase = self.engine.get_phase()
         odom_msg = self.engine.get_odom()        
         # webots simulation has soft floor and reference needs to sink into it a bit

@@ -79,7 +79,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
-                 use_gyro=True, use_imu_orientation=True, node: Node = None):
+                 use_gyro=True, use_imu_orientation=True, node: Node = None, robot_type="wolfgang"):
         super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
                          ros_debug=True, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -90,7 +90,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                          terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                          phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
                          use_complementary_filter=False, random_head_movement=False, adaptive_phase=adaptive_phase,
-                         use_gyro=use_gyro, use_imu_orientation=use_imu_orientation, node=node)
+                         use_gyro=use_gyro, use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type)
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
         self.node = node

@@ -104,8 +104,8 @@ class Robot:
             # how the foot pos and rpy are scaled. from [-1:1] action to meaningful m or rad
             # foot goal is relative to the start of the leg, so that 0 would be the center of possible poses
             # x, y, z, roll, pitch, yaw
-            self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
-                                        (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.cartesian_limits_left = [(-0.17, 0.27), (0, 0.25), (-0.44, -0.24), (-math.tau / 12, math.tau / 12),
+                                        (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.relative_scaling_joint_action = 0.1
             self.relative_scaling_cartesian_action_pos = 0.05
             self.relative_scaling_cartesian_action_ori = math.tau / 24      
@@ -123,9 +123,8 @@ class Robot:
             self.head_pan_name = "head_pan"
             self.head_tilt_name = "head_tilt"                            
             self.additional_ref_height = 0
-            # todo tune
             self.cartesian_limits_left = [(-0.12, 0.2), (0, 0.2), (-0.25, -0.15), (-math.tau / 12, math.tau / 12),
-                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+                            (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.54, 0.45), (-0.13, 0.13), (-2.01, 2.01), 0.54]                                                                                                      
         elif self.robot_type == "rfc":
             self.initial_joint_positions = {"LeftFootPitch": 0, "LeftFootRoll": 0, "LeftHipPitch": 0, "LeftHipRoll": 0,
@@ -139,8 +138,8 @@ class Robot:
             self.head_pan_name = "HeadYaw"
             self.head_tilt_name = "HeadPitch"  
             self.additional_ref_height = 0
-            self.cartesian_limits_left = [(-0.15, 0.27), (0, 0.25), (-0.36, -0.26), (-math.tau / 12, math.tau / 12),
-                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.cartesian_limits_left = [(-0.15, 0.30), (-0.02, 0.28), (-0.44, -0.2), (-math.tau / 12, math.tau / 12),
+                                        (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.40, 0.37), (-0.36, 0.13), (-1.99, 1.99), 0.40]                                                                                                                  
         elif self.robot_type == "chape":
             self.initial_joint_positions = {"rightShoulderPitch":75.58, "leftShoulderPitch":75.27, "rightShoulderYaw":75.58, 
@@ -154,10 +153,24 @@ class Robot:
                                "rightAnklePitch", "leftAnklePitch", "rightAnkleRoll", "leftAnkleRoll"]
             self.head_pan_name = "neckYaw"                               
             self.head_tilt_name = "neckPitch"
-            self.additional_ref_height = 0.1
-            self.cartesian_limits_left = [(-0.1, 0.15), (0, 0.15), (-0.28, -0.16), (-math.tau / 12, math.tau / 12),
-                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
+            self.additional_ref_height = 0.12
+            self.cartesian_limits_left = [(-0.05, 0.1), (0, 0.15), (-0.26, -0.16), (-math.tau / 12, math.tau / 12),
+                (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.36, 0.3), (-0.1, 0.1), (-2.09, 2.09), 0.36]
+        elif self.robot_type == "mrl_hsl":
+            self.initial_joint_positions = {"Shoulder-R": -60.0, "UpperArm-R":-10.0, "LowerArm-R":135.0, "Shoulder-L": 60.0,
+                                            "UpperArm-L":10.0, "LowerArm-L":-135.0, "HipYaw-R":0, "HipRoll-R":0, "HipPitch-R":0,
+                                            "KneePitch-R":0, "AnklePitch-R":0, "AnkleRoll-R":0, "HipYaw-L":0, "HipRoll-L":0,
+                                            "HipPitch-L":0, "KneePitch-L":0, "AnklePitch-L":0, "AnkleRoll-L":0, "NeckYaw":0,
+                                            "HeadPitch":0}
+            self.leg_joints = ["HipYaw-R", "HipRoll-R", "HipPitch-R", "KneePitch-R", "AnklePitch-R", "AnkleRoll-R", 
+                               "HipYaw-L", "HipRoll-L", "HipPitch-L", "KneePitch-L", "AnklePitch-L", "AnkleRoll-L"]
+            self.head_pan_name = "NeckYaw"                               
+            self.head_tilt_name = "HeadPitch"
+            self.additional_ref_height = 0.24
+            self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
+                    (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
+            self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
         else:
             print(f"No joints specified for robot type {self.robot_type}")
             exit()

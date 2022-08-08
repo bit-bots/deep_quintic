@@ -330,7 +330,7 @@ class DeepQuinticEnv(gym.Env):
             """
 
             # set command vel based on GUI input if appropriate
-            if self.gui and False:
+            if self.gui:
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()
                 if gui_cmd_vel is not None:
                     self.current_command_speed = gui_cmd_vel

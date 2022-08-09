@@ -66,17 +66,23 @@ If you want to use a different robot model for training in Webots you will need 
         <pre><code>
         DEF NeckYawJoint HingeJoint{...}
         </code></pre>
-4. Define necessary informations in robot.py
+4. Copy another ROBOT_NAME-optimization.proto and adapt it (this is necessary to avoid some weird webots bugs and maybe not necessary for all robot types. Propably something related to the HingeJointsWithBacklash)
+    1. Change the name of the file to the correct robot name
+    2. Change the name of the robot in the .proto    
+5. Add a world file for the robot.
+    1. Copy the deep_quintic_ROBOTNAME.wbt file of another robot into the worlds folder of your robot package
+    2. Replace the robot name in the file name
+    3. Replace the name of the robot proto for the learnbot and refbot in the .wbt file
+6. Define necessary informations in robot.py
     1. Add a new robot in the __init__() of the Robot class, similar to the existing ones.
     2. Define the initial state positions. Here the arms are especially important as they are not set to the reference.
     3. Define which joints belong to the legs of the robot and which belong to the head
     4. You may need to define an additional height offset for resetting your robot, based on where your base_link is. Just see if the robot is placed at the correct height during resets and adapt this value accordingly.
     5. Define the Cartesian limits for the action space. Not all poses in this space need to be solvable, as approximation will be used otherwise. Still, at least half of the poses should be solvable as the policy may otherwise run into to many IK issues during training. If the number is too high, you may restrict your action space too much. You can use the find_cartesian_limits.py script to check how many poses are solvable. You can also run the reference motion as action and see if it stays in the action bounds of [-1,1]
     6. Define the command velocity limits. You can use the test_solvable_speeds.py script in the bitbots_quinitic_walk package to find these.
-
-5. Verify that everthing is correct
+7. Verify that everthing is correct
     1. Start with using the reference action as action
-    2. Start PlotJuggler and visualize state entries and rewards. Check if all values are correct
+    2. Start PlotJuggler and visualize state entries and rewards. Check if all values are correct. Especially check if IMU is correctly oriented.
 
 ### Todos
 - Refactoring

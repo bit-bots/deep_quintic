@@ -10,7 +10,7 @@ from deep_quintic.utils import compute_ik
 from transforms3d.euler import euler2quat
 import math
 
-robot_type = "op3"
+robot_type = "mrl_hsl"
 experiment_number = 1000
 threshold = 0.0001
 sample_bounds = (((-0.5, 0.5), (-0.5, 0.5), (-0.5, -0.0), 

@@ -171,6 +171,71 @@ class Robot:
             self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
                     (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
+        elif self.robot_type == "nao":
+            self.initial_joint_positions = {"RShoulderPitch":90.0, "LShoulderPitch":90.0, "RShoulderRoll":-17.0, "LShoulderRoll":17.0, "RElbowYaw":0,
+                                      "LElbowYaw":0, "RHipYawPitch":0, "LHipYawPitch":0, "RHipRoll":0, "LHipRoll":0, "RHipPitch":0,
+                                      "LHipPitch":0, "RKneePitch":0, "LKneePitch":0, "RAnklePitch":0, "LAnklePitch":0, "RAnkleRoll":0,
+                                      "LAnkleRoll":0, "HeadYaw":0, "HeadPitch":0}
+            self.leg_joints = ["RHipYawPitch", "LHipYawPitch", "RHipRoll", "LHipRoll", "RHipPitch","LHipPitch",
+                               "RKneePitch", "LKneePitch", "RAnklePitch", "LAnklePitch", "RAnkleRoll", "LAnkleRoll",]
+            self.head_pan_name = "HeadYaw"                               
+            self.head_tilt_name = "HeadPitch"
+            self.additional_ref_height = 0.01
+            #todo
+            self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
+                    (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
+            #todo
+            self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
+        elif self.robot_type == "nugus":
+            self.initial_joint_positions = {"neck_yaw":0, "head_pitch":0, "left_hip_yaw":0, "left_hip_roll":0,
+                                            "left_hip_pitch":0, "left_knee_pitch":0, "left_ankle_pitch":0, "left_ankle_roll":0,
+                                            "right_hip_yaw":0, "right_hip_roll":0, "right_hip_pitch":0, "right_knee_pitch":0,
+                                            "right_ankle_pitch":0, "right_ankle_roll":0, "left_shoulder_pitch":120,
+                                            "left_shoulder_roll":20, "left_elbow_pitch":-120, "right_shoulder_pitch":120,
+                                            "right_shoulder_roll":-20, "right_elbow_pitch":-120}
+
+            self.leg_joints = ["left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee_pitch", "left_ankle_pitch", "left_ankle_roll",
+                               "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee_pitch", "right_ankle_pitch", "right_ankle_roll"]
+            self.head_pan_name = "neck_yaw"                               
+            self.head_tilt_name = "head_pitch"
+            self.additional_ref_height = 0.012
+            #todo
+            self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
+                    (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
+            #todo
+            self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
+        elif self.robot_type == "op2":
+            self.initial_joint_positions = {"RShoulderPitch":120, "LShoulderPitch":60, "RShoulderRoll":0, "LShoulderRoll":0, "RElbow":60,
+                                            "LElbow":-60, "RHipYaw":0, "LHipYaw":0, "RHipRoll":0, "LHipRoll":0, "RHipPitch":0,
+                                            "LHipPitch":0, "RKnee":0, "LKnee":0, "RAnklePitch":0, "LAnklePitch":0, "RAnkleRoll":0,
+                                            "LAnkleRoll":0, "HeadPan":0, "HeadTilt":0}
+            self.leg_joints = ["RHipYaw", "LHipYaw", "RHipRoll", "LHipRoll", "RHipPitch", "LHipPitch", "RKnee", "LKnee", 
+                               "RAnklePitch", "LAnklePitch", "RAnkleRoll", "LAnkleRoll"]
+            self.head_pan_name = "HeadPan"                               
+            self.head_tilt_name = "HeadTilt"
+            self.additional_ref_height = 0.09
+            #todo
+            self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
+                    (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
+            #todo
+            self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
+        elif self.robot_type == "bez":
+            self.initial_joint_positions = {"head_motor_0":0, "head_motor_1":0, "right_leg_motor_0":0, "right_leg_motor_1":0,
+                                            "right_leg_motor_2":0, "right_leg_motor_3":0, "right_leg_motor_4":0,
+                                            "right_leg_motor_5":0, "left_leg_motor_0":0, "left_leg_motor_1":0,
+                                            "left_leg_motor_2":0, "left_leg_motor_3":0, "left_leg_motor_4":0, "left_leg_motor_5":0,
+                                            "right_arm_motor_0":0, "right_arm_motor_1":170, "left_arm_motor_0":0, "left_arm_motor_1":170}
+            self.leg_joints = ["right_leg_motor_0", "right_leg_motor_1", "right_leg_motor_2", "right_leg_motor_3", "right_leg_motor_4",
+                               "right_leg_motor_5", "left_leg_motor_0", "left_leg_motor_1",
+                               "left_leg_motor_2", "left_leg_motor_3", "left_leg_motor_4", "left_leg_motor_5"]
+            self.head_pan_name = "head_motor_0"                               
+            self.head_tilt_name = "head_motor_1"
+            self.additional_ref_height = 0.15
+            #todo
+            self.cartesian_limits_left = [(-0.2, 0.25), (0, 0.25), (-0.30, -0.15), (-math.tau / 12, math.tau / 12),
+                    (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
+            #todo
+            self.cmd_vel_max_bounds = [(-0.48, 0.54), (-0.18, 0.18), (-3.1, 3.1), 0.36]
         else:
             print(f"No joints specified for robot type {self.robot_type}")
             exit()

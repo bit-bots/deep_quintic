@@ -10,26 +10,24 @@ from deep_quintic.utils import compute_ik
 from transforms3d.euler import euler2quat
 import math
 
-robot_type = "mrl_hsl"
+robot_type = "bez"
 experiment_number = 1000
 threshold = 0.0001
 sample_bounds = (((-0.5, 0.5), (-0.5, 0.5), (-0.5, -0.0), 
-                  (-math.tau / 8, math.tau / 8), (-math.tau / 8, math.tau / 8), (-math.tau / 8, math.tau / 8)))
-sample_bounds = [(-0.12, 0.2), (0, 0.2), (-0.25, -0.15), (-math.tau / 12, math.tau / 12),
-                            (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12)]
-
+                  (-math.tau / 12, math.tau / 12), (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)))
+sample_bounds = [(-0.05, 0.1), (0, 0.10), (-0.20, -0.1), (-math.tau / 12, math.tau / 12),
+                (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
 initRos()
 rclpy.init()
 node = Node("find_cartesian_limits")
 moveit_parameters = load_moveit_parameter(robot_type)
-set_moveit_parameters(moveit_parameters)
+set_moveit_parameters(moveit_parameters, "ikfk")
 
 print(f"\nRandom sampling {experiment_number} Cartesian goal poses for left foot of robot {robot_type}.")
 print(f"Sample space is {sample_bounds}")
 print(f"Threshold is {threshold}")
 
 results = []
-cartesian_bounds = [[-math.inf,math.inf], [0,0], [0,0], [0,0], [0,0], [0,0]]
 
 def print_results():
     global results, successes

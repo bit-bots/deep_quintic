@@ -58,13 +58,18 @@ class PhaseState(State):
 
     def get_state_entries(self, scaled):
         output = dict()  # is ordered in 3.7+
-        output["cmd_vel"] = self.env.current_command_speed
+        # out of some reason we need to do deepcopy
+        output["cmd_vel"] = deepcopy(self.env.current_command_speed)
+        # scale         
+        output["cmd_vel"][1] = output["cmd_vel"][1] * 2.0
+        output["cmd_vel"][2] = output["cmd_vel"][1] / 4.0
+        phase = deepcopy(self.env.refbot.phase)
         if self.env.phase_in_state:
             if self.env.cyclic_phase:
-                output["phase"] = [math.sin(self.env.refbot.phase * math.tau),
-                                   math.cos(self.env.refbot.phase * math.tau)]
+                output["phase"] = [math.sin(phase * math.tau),
+                                   math.cos(phase * math.tau)]
             else:
-                output["phase"] = [self.env.refbot.phase]
+                output["phase"] = deepcopy([phase])
         return output
 
 
@@ -115,10 +120,12 @@ class BaseState(PhaseState):
             output["ang_vel"] = ang_vel
 
         if self.use_foot_sensors != "":
-            foot_pressures = self.get_pressure_array(self.use_foot_sensors)
+            foot_pressures = deepcopy(self.get_pressure_array(self.use_foot_sensors))
 
             if self.use_foot_sensors == "binary":
-                output["foot_pressure"] = foot_pressures
+                output["foot_pressure"] = []
+                for pressure in foot_pressures:
+                    output.append(pressure>0.0) #todo usage of a threshould would maybe make sens
             else:
                 output["foot_pressure"] = foot_pressures / np.array(100) if scaled else foot_pressures
 
@@ -129,11 +136,11 @@ class BaseState(PhaseState):
             else:
                 if self.env.cartesian_action:
                     output["ref_action"] = self.env.robot.scale_pose_to_action(
-                        self.env.refbot.next_left_foot_pos,
-                        quat2euler(self.env.refbot.next_left_foot_quat),
-                        self.env.refbot.next_right_foot_pos,
-                        quat2euler(self.env.refbot.next_right_foot_quat),
-                        self.env.rot_type)
+                        deepcopy(self.env.refbot.next_left_foot_pos),
+                        quat2euler(deepcopy(self.env.refbot.next_left_foot_quat)),
+                        deepcopy(self.env.refbot.next_right_foot_pos),
+                        quat2euler(deepcopy(self.env.refbot.next_right_foot_quat)),
+                        deepcopy(self.env.rot_type))
                 else:
                     print("not implemented")
                     exit()
@@ -160,39 +167,39 @@ class CartesianState(BaseState):
 
     def get_state_entries(self, scaled):
         output = super(CartesianState, self).get_state_entries(scaled)
-        output["left_pos"] = self.env.robot.left_foot_pos
-        output["right_pos"] = self.env.robot.right_foot_pos
+        output["left_pos"] = deepcopy(self.env.robot.left_foot_pos)
+        output["right_pos"] = deepcopy(self.env.robot.right_foot_pos)
 
         if self.leg_vel_in_state:
-            output["left_lin"] = self.env.robot.left_foot_lin_vel / np.array(5) if scaled else \
-                self.env.robot.left_foot_lin_vel
-            output["right_lin"] = self.env.robot.right_foot_lin_vel / np.array(5) if scaled else \
-                self.env.robot.right_foot_lin_vel
+            output["left_lin"] = deepcopy(self.env.robot.left_foot_lin_vel) / np.array(5) if scaled else \
+                deepcopy(self.env.robot.left_foot_lin_vel)
+            output["right_lin"] = deepcopy(self.env.robot.right_foot_lin_vel) / np.array(5) if scaled else \
+                deepcopy(self.env.robot.right_foot_lin_vel)
 
-            output["left_ang"] = self.env.robot.left_foot_ang_vel / np.array(4 * math.tau) if scaled else \
-                self.env.robot.right_foot_ang_vel
-            output["right_ang"] = self.env.robot.right_foot_ang_vel / np.array(4 * math.tau) if scaled else \
-                self.env.robot.right_foot_ang_vel
+            output["left_ang"] = deepcopy(self.env.robot.left_foot_ang_vel) / np.array(4 * math.tau) if scaled else \
+                deepcopy(self.env.robot.right_foot_ang_vel)
+            output["right_ang"] = deepcopy(self.env.robot.right_foot_ang_vel) / np.array(4 * math.tau) if scaled else \
+                deepcopy(self.env.robot.right_foot_ang_vel)
 
         if self.env.rot_type == Rot.RPY:
-            left_rot = quat2euler(self.env.robot.left_foot_quat)
-            right_rot = quat2euler(self.env.robot.left_foot_quat)
+            left_rot = quat2euler(deepcopy(self.env.robot.left_foot_quat))
+            right_rot = quat2euler(deepcopy(self.env.robot.left_foot_quat))
             output["left_rot"] = left_rot / np.array(math.tau / 4) if scaled else left_rot
             output["right_rot"] = right_rot / np.array(math.tau / 4) if scaled else right_rot
         elif self.env.rot_type == Rot.FUSED:
             # without hemi
-            left_rot = quat2fused(self.env.robot.left_foot_quat)[:3]
-            right_rot = quat2fused(self.env.robot.left_foot_quat)[:3]
+            left_rot = quat2fused(deepcopy(self.env.robot.left_foot_quat))[:3]
+            right_rot = quat2fused(deepcopy(self.env.robot.left_foot_quat))[:3]
             output["left_rot"] = left_rot / np.array(math.tau / 4) if scaled else left_rot
             output["right_rot"] = right_rot / np.array(math.tau / 4) if scaled else right_rot
         elif self.env.rot_type == Rot.QUAT:
-            left_rot = self.env.robot.left_foot_quat
-            right_rot = self.env.robot.left_foot_quat
+            left_rot = deepcopy(self.env.robot.left_foot_quat)
+            right_rot = deepcopy(self.env.robot.left_foot_quat)
             output["left_rot"] = left_rot
             output["right_rot"] = right_rot
         elif self.env.rot_type == Rot.SIXD:
-            left_rot = quat2sixd(self.env.robot.left_foot_quat)
-            right_rot = quat2sixd(self.env.robot.left_foot_quat)
+            left_rot = quat2sixd(deepcopy(self.env.robot.left_foot_quat))
+            right_rot = quat2sixd(deepcopy(self.env.robot.left_foot_quat))
             output["left_rot"] = left_rot
             output["right_rot"] = right_rot
 
@@ -213,10 +220,12 @@ class JointSpaceState(BaseState):
             # we are running in simulation, get the values
             joint_positions, joint_velocities, joint_torques = self.env.sim.get_joint_values(
                 self.env.robot.used_joint_names, scaled, self.env.robot.robot_index)
+            joint_positions = deepcopy(joint_positions)
+            joint_velocities = deepcopy(joint_velocities)
         else:
             # values have been provided by ROS
-            joint_positions = self.env.robot.joint_positions
-            joint_velocities = self.env.robot.joint_velocities
+            joint_positions = deepcopy(self.env.robot.joint_positions)
+            joint_velocities = deepcopy(self.env.robot.joint_velocities)
         output["joint_positions"] = joint_positions
         if self.leg_vel_in_state:
             output["joint_velocities"] = joint_velocities

@@ -50,7 +50,6 @@ class ROSDebugInterface:
 
         self.action_publisher = self.env.node.create_publisher(Float32MultiArray, "action_debug", 1)
         self.action_publisher_not_normalized = self.env.node.create_publisher( Float32MultiArray, "action_debug_not_normalized", 1)
-        self.state_publisher = self.env.node.create_publisher(Float32MultiArray, "state", 1)
         self.refbot_joint_publisher = self.env.node.create_publisher(JointState, "ref_joint_states", 1)
         self.refbot_left_foot_publisher = self.env.node.create_publisher(PoseStamped, "ref_left_foot", 1)
         self.refbot_right_foot_publisher = self.env.node.create_publisher(PoseStamped, "ref_right_foot", 1)

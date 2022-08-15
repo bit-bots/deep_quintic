@@ -152,6 +152,7 @@ class PybulletSim(Simulation, AbstractSim):
         self.node.declare_parameter("rolling_friction", 0.0)
         self.node.declare_parameter("cutoff", 0)
         self.node.declare_parameter("order", 0)
+        self.node.declare_parameter("restitution", 0.0)
         # load simulation params
         load_parameter_file(node=self.node, node_name=self.node.get_name(),
                             parameter_file=f'{get_package_share_directory("wolfgang_pybullet_sim")}/config/config.yaml',

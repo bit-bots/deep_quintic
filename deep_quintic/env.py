@@ -4,6 +4,7 @@ from ament_index_python import get_package_share_directory
 from bitbots_moveit_bindings import set_moveit_parameters
 from bitbots_moveit_bindings.libbitbots_moveit_bindings import initRos
 from rclpy.node import Node
+import os
 
 import numpy as np
 from bitbots_msgs.msg import FootPressure
@@ -41,6 +42,8 @@ class DeepQuinticEnv(gym.Env):
         'render.modes': ['human', 'rgb_array'],
         'video.frames_per_second': 30
     }
+    render_mode = "rgb_array"
+    reward_range = (0, 1)
 
     def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", used_joints="Legs",
                  step_freq=30, ros_debug=False, gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
@@ -49,7 +52,7 @@ class DeepQuinticEnv(gym.Env):
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
                  adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
-                 node: Node = None, robot_type = None) -> None:
+                 node: Node = None, robot_type = None, walk_parameter_file=None) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -117,7 +120,7 @@ class DeepQuinticEnv(gym.Env):
         self.camera_yaw = 0
         self.camera_pitch = -30
         self.render_width = 800
-        self.render_height = 600
+        self.render_height = 600        
 
         # Instantiating Simulation
         if "_off" in simulator_type:
@@ -141,12 +144,12 @@ class DeepQuinticEnv(gym.Env):
             self.step_freq = 1 / (self.sim_steps * self.sim.time_step)
             # length of one step in env
             self.env_timestep = self.sim_steps * self.sim.time_step
-            print(f"sim timestep {self.sim.time_step}")
-            print(f"sim_steps {self.sim_steps}")
-            print(f"requests env_timestep {1 / step_freq}")
-            print(f"actual env_timestep {self.env_timestep}")
-            print(f"requests freq {step_freq}")
-            print(f"actual freq {self.step_freq}")
+            #print(f"sim timestep {self.sim.time_step}")
+            #print(f"sim_steps {self.sim_steps}")
+            #print(f"requests env_timestep {1 / step_freq}")
+            #print(f"actual env_timestep {self.env_timestep}")
+            #print(f"requests freq {step_freq}")
+            #print(f"actual freq {self.step_freq}")
         else:
             # for ros runner just set time so that it matches the required frequency
             self.sim_steps = 0
@@ -193,9 +196,12 @@ class DeepQuinticEnv(gym.Env):
             sim_name = simulator_type
             if sim_name in ["webots_extern", "webots_fast"]:
                 sim_name = "webots"
+            if walk_parameter_file is None:
+                # use default
+                walk_parameter_file = f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}_{self.robot_type}.yaml"
             walk_parameters = get_parameters_from_ros_yaml("walking",
-                                                           f"{get_package_share_directory('bitbots_quintic_walk')}/config/deep_quintic_{sim_name}_{self.robot_type}.yaml",
-                                                           use_wildcard=True)
+                                                            walk_parameter_file,
+                                                            use_wildcard=True)
             self.engine = WalkEngine(self.namespace, walk_parameters + moveit_parameters)
             self.engine_freq = self.engine.get_freq()
         else:
@@ -248,8 +254,8 @@ class DeepQuinticEnv(gym.Env):
         # All actions and observations are bound between to -1 and 1
         self.num_observations = self.state.get_num_observations() * self.state_buffer_size + \
                                 self.num_actions * self.action_buffer_size
-        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.num_actions,), dtype=np.float32)
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.num_observations,), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.num_actions,), dtype=np.float64)
+        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.num_observations,), dtype=np.float64)
 
         # add publisher if ROS debug is active
         if self.ros_debug:
@@ -316,7 +322,6 @@ class DeepQuinticEnv(gym.Env):
                 self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
                                                 random.uniform(*self.cmd_vel_current_bounds[1]),
                                                 random.uniform(*self.cmd_vel_current_bounds[2])]
-                                                                
                 if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
                     break 
 
@@ -642,10 +647,10 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
-                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang"):
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None):
         if node is None:
             rclpy.init()
-            node_name = 'walking_env'
+            node_name = 'walking_env' + "_anon_" + str(os.getpid()) + "_" + str(random.randint(0, 10000000))
             node = Node(node_name)
 
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
@@ -660,4 +665,4 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
-                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type)
+                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, walk_parameter_file=walk_parameter_file)

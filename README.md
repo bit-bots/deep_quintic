@@ -66,6 +66,7 @@ If you want to use a different robot model for training in Webots you will need 
         <pre><code>
         DEF NeckYawJoint HingeJoint{...}
         </code></pre>
+    6. Add an l_sole and r_sole frame to the proto that represents the corresponding frame following REP-120. Make sure that it is correctly positioned and rotated, e.g. by comparing the ros debug data of the state and the reference trajectory.
 4. Copy another ROBOT_NAME-optimization.proto and adapt it (this is necessary to avoid some weird webots bugs and maybe not necessary for all robot types. Propably something related to the HingeJointsWithBacklash)
     1. Change the name of the file to the correct robot name
     2. Change the name of the robot in the .proto    

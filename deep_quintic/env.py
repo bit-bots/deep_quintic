@@ -85,6 +85,7 @@ class DeepQuinticEnv(gym.Env):
         self.use_gyro = use_gyro
         self.use_imu_orientation = use_imu_orientation
         self.robot_type = robot_type
+        self.head_movement_counter = 0
 
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
@@ -264,7 +265,7 @@ class DeepQuinticEnv(gym.Env):
         # run check after everything is initialized
         if False and self.ros_debug:
             check_env(self)
-
+        
     def get_cmd_vel_bounds(self):
         return self.cmd_vel_current_bounds
 
@@ -299,10 +300,10 @@ class DeepQuinticEnv(gym.Env):
                                  self.domain_rand_bounds["spinning_friction"],
                                  self.domain_rand_bounds["rolling_friction"])
 
-    def reset(self):        
+    def reset(self):
         if self.gui:
             # reset refbot
-            self.sim.reset_joints_to_init_pos(self.refbot.robot_index)
+            self.sim.reset_joints_to_init_pos(self.refbot.robot_index)        
         if self.randomize:
             self.randomize_domain()
         if self.terrain_height > 0:
@@ -324,7 +325,6 @@ class DeepQuinticEnv(gym.Env):
                                                 random.uniform(*self.cmd_vel_current_bounds[2])]
                 if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
                     break 
-
             """# make sure that the combination of x and y speed is not too low or too high
             if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.robot.cmd_vel_max_bounds[3]:
                 # decrease one of the two
@@ -531,7 +531,11 @@ class DeepQuinticEnv(gym.Env):
             # apply some random force
             self.robot.apply_random_force(self.domain_rand_bounds["max_force"], self.domain_rand_bounds["max_torque"])
         if self.random_head_movement:
-            self.robot.set_random_head_goals()
+            # don't send head motor goals all the time to allow actually some movement
+            if self.head_movement_counter == 10:
+                self.head_movement_counter = 0
+                self.robot.set_random_head_goals()
+            self.head_movement_counter += 1
 
         for i in range(self.sim_steps):
             self.step_simulation()

@@ -510,7 +510,7 @@ class Robot:
 
         self.sim.reset_pressure_filters(self.robot_index)
         if self.complementary_filter is not None:
-            self.complementary_filter.reset(euler2quat(0, 0.25, 0))
+            self.complementary_filter.reset(euler2quat(0, 0, 0))
 
         # reset body pose and velocity
         self.sim.reset_base_position_and_orientation(self.pose_on_episode_start[0],
@@ -531,7 +531,7 @@ class Robot:
         self.sim.reset_joints_to_init_pos(self.robot_index)
         self.sim.reset_pressure_filters(self.robot_index)
         if self.complementary_filter is not None:
-            self.complementary_filter.reset(refbot.quat_in_world)
+            self.complementary_filter.reset(qinverse(refbot.quat_in_world))
         # first compute the joints via IK
         refbot.solve_ik_exactly()
         i = 0
@@ -787,8 +787,11 @@ class Robot:
         for name, position, velocity in zip(self.used_joint_names, positions, velocities):
             self.joints[name].state = [position, velocity, 0, 0]
 
-    def get_imu_msg(self):
-        imu_quat = euler2quat(*self.imu_rpy, axes='sxyz')
+    def get_imu_msg(self, ground_truth=False):
+        if ground_truth:
+            imu_quat = self.quat_in_world
+        else:
+            imu_quat = euler2quat(*self.imu_rpy, axes='sxyz')
         # change to ros standard
         quat = wxyz2xyzw(imu_quat)
         self.imu_msg.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])

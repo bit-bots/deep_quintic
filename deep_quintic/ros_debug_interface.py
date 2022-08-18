@@ -43,6 +43,7 @@ class ROSDebugInterface:
         self.right_foot_pressure_publisher_filtered = self.env.node.create_publisher(FootPressure, "foot_pressure_filtered/right", 1)
         self.joint_publisher = self.env.node.create_publisher(JointState, "joint_states", 1)
         self.imu_publisher = self.env.node.create_publisher(Imu, "imu/data", 1)
+        self.imu_truth_publisher = self.env.node.create_publisher(Imu, "imu/truth", 1)
         self.imu_rpy_publisher = self.env.node.create_publisher(Float32MultiArray, "imu_rpy", 1)
         self.clock_publisher = self.env.node.create_publisher(Clock, "clock", 1)
         self.real_time_factor_publisher = self.env.node.create_publisher(Float32, "real_time_factor", 1)
@@ -122,6 +123,9 @@ class ROSDebugInterface:
     def publish_imu(self):
         if self.imu_publisher.get_subscription_count() > 0:
             self.imu_publisher.publish(self.env.robot.get_imu_msg())
+
+        if self.imu_truth_publisher.get_subscription_count() > 0:
+            self.imu_truth_publisher.publish(self.env.robot.get_imu_msg(ground_truth=True))
 
         if self.imu_rpy_publisher.get_subscription_count() > 0:
             rpy_msg = Float32MultiArray()

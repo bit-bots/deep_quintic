@@ -5,6 +5,7 @@ from bitbots_moveit_bindings import set_moveit_parameters
 from bitbots_moveit_bindings.libbitbots_moveit_bindings import initRos
 from rclpy.node import Node
 import os
+import signal as sig
 
 import numpy as np
 from bitbots_msgs.msg import FootPressure
@@ -62,6 +63,9 @@ class DeepQuinticEnv(gym.Env):
         @param trajectory_file: file containing reference trajectory. without the environment will not use it
         @param early_termination: if episode should be terminated early when robot falls
         """
+        # make sure that we can always close the webots subprocess correctly
+        sig.signal(sig.SIGTERM, self.close)
+
         self.node = node
         self.gui = gui
         self.ros_debug = ros_debug
@@ -333,7 +337,6 @@ class DeepQuinticEnv(gym.Env):
                 self.current_command_speed[direction] = sign * (abs(self.robot.cmd_vel_max_bounds[3]) - abs(
                     self.current_command_speed[(direction + 1) % 2]))
             """
-
             # set command vel based on GUI input if appropriate
             if self.gui:
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()

@@ -8,6 +8,7 @@ from abc import ABC
 import pybullet as p
 import numpy as np
 import transforms3d.axangles
+import prctl
 
 try:
     # this import is from webots not from the controller python package. if the controller package is installed it will also fail!
@@ -246,7 +247,7 @@ class WebotsSim(SupervisorController, AbstractSim):
             if fast_physics:
                 fast = "_fast"
 
-            arguments = ["webots",
+            arguments = ["webots", #/usr/local/webots/bin/webots-bin
                          "--batch",
                          path + "/worlds/" + world + fast + ".wbt"]
             if not gui:
@@ -254,7 +255,8 @@ class WebotsSim(SupervisorController, AbstractSim):
                 arguments.append("--no-rendering")
                 arguments.append("--stdout")
                 arguments.append("--stderr")
-            self.sim_proc = subprocess.Popen(arguments, stdout=subprocess.PIPE)
+            prctl.set_pdeathsig(sig.SIGKILL)
+            self.sim_proc = subprocess.Popen(arguments, preexec_fn=lambda: prctl.set_pdeathsig(sig.SIGKILL))
 
             os.environ["WEBOTS_PID"] = str(self.sim_proc.pid)
 

@@ -60,16 +60,17 @@ class PhaseState(State):
         output = dict()  # is ordered in 3.7+
         # out of some reason we need to do deepcopy
         output["cmd_vel"] = deepcopy(self.env.current_command_speed)
-        # scale         
-        output["cmd_vel"][1] = output["cmd_vel"][1] * 2.0
-        output["cmd_vel"][2] = output["cmd_vel"][1] / 4.0
+        # scale
+        if scaled:
+            output["cmd_vel"][1] = output["cmd_vel"][1] * 2.0
+            output["cmd_vel"][2] = output["cmd_vel"][2] / 4.0
         phase = deepcopy(self.env.refbot.phase)
         if self.env.phase_in_state:
             if self.env.cyclic_phase:
                 output["phase"] = [math.sin(phase * math.tau),
                                    math.cos(phase * math.tau)]
             else:
-                output["phase"] = deepcopy([phase])
+                output["phase"] = [phase]
         return output
 
 

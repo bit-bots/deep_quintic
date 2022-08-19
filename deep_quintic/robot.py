@@ -87,7 +87,7 @@ class Robot:
             self.complementary_filter = ComplementaryFilter()
         self.last_ik_result = None        
         self.head_tilt_limits = (-1,1)
-        self.head_pan_limits = (-1.58, 1.58)
+        self.head_pan_limits = (-1.57, 1.57)
 
         if self.robot_type == "wolfgang":
             self.initial_joint_positions = {"LAnklePitch": -30, "LAnkleRoll": 0, "LHipPitch": 30, "LHipRoll": 0,
@@ -110,8 +110,8 @@ class Robot:
                                           (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.relative_scaling_joint_action = 0.1
             self.relative_scaling_cartesian_action_pos = 0.05
-            self.relative_scaling_cartesian_action_ori = math.tau / 24      
-            self.cmd_vel_max_bounds = [(-0.6, 0.6), (-0.25, 0.25), (-2.0, 2.0)]                                                          
+            self.relative_scaling_cartesian_action_ori = math.tau / 24
+            self.cmd_vel_max_bounds = [(-0.6, 0.6), (-0.25, 0.25), (-2.0, 2.0)]
         elif self.robot_type == "op3":
             self.initial_joint_positions = {"r_sho_pitch": 135, "l_sho_pitch": -135,
                                          "r_sho_roll": 90, "l_sho_roll": -90,
@@ -143,6 +143,7 @@ class Robot:
             self.cartesian_limits_left = [(-0.15, 0.30), (-0.02, 0.28), (-0.44, -0.15), (-math.tau / 6, math.tau / 6),
                                         (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.40, 0.40), (-0.35, 0.35), (-2.0, 2.0)]
+            self.head_pan_limits = (-1.5, 1.5)
         elif self.robot_type == "chape":
             self.initial_joint_positions = {"rightShoulderPitch":75.58, "leftShoulderPitch":75.27, "rightShoulderYaw":75.58, 
                                             "leftShoulderYaw":-75.58, "rightElbowYaw":160, "leftElbowYaw":-160,
@@ -199,7 +200,7 @@ class Robot:
                                "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee_pitch", "right_ankle_pitch", "right_ankle_roll"]
             self.head_pan_name = "neck_yaw"                               
             self.head_tilt_name = "head_pitch"
-            self.additional_ref_height = 0.012
+            self.additional_ref_height = 0.02
             self.cartesian_limits_left = [(-0.25, 0.35), (-0.05, 0.30), (-0.45, -0.24), (-math.tau / 8, math.tau / 6),
                                           (-math.tau / 12, math.tau / 12), (-math.tau / 8, math.tau / 8)]
             self.cmd_vel_max_bounds = [(-0.6, 0.5), (-0.3, 0.3), (-2.0, 2.0)]
@@ -858,6 +859,6 @@ class Robot:
 
     def set_random_head_goals(self):
         pan = random.uniform(*self.head_pan_limits)
-        self.sim.set_joint_position(self.head_pan_name, pan, scaled=True, relative=False, robot_index=self.robot_index)
+        self.sim.set_joint_position(self.head_pan_name, pan, scaled=False, relative=False, robot_index=self.robot_index)
         tilt = random.uniform(*self.head_tilt_limits)
-        self.sim.set_joint_position(self.head_tilt_name, tilt, scaled=True, relative=False, robot_index=self.robot_index)
+        self.sim.set_joint_position(self.head_tilt_name, tilt, scaled=False, relative=False, robot_index=self.robot_index)

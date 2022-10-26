@@ -8,7 +8,7 @@ from abc import ABC
 import pybullet as p
 import numpy as np
 import transforms3d.axangles
-import prctl
+import psutil
 
 try:
     # this import is from webots not from the controller python package. if the controller package is installed it will also fail!
@@ -255,12 +255,11 @@ class WebotsSim(SupervisorController, AbstractSim):
                 arguments.append("--no-rendering")
                 arguments.append("--stdout")
                 arguments.append("--stderr")
-            prctl.set_pdeathsig(sig.SIGKILL)
-            self.sim_proc = subprocess.Popen(arguments, preexec_fn=lambda: prctl.set_pdeathsig(sig.SIGKILL))
+            self.sim_proc = subprocess.Popen(arguments)
 
             os.environ["WEBOTS_PID"] = str(self.sim_proc.pid)
 
-        if gui:
+        if gui or True: #this is a hack because fast mode has a bug https://github.com/cyberbotics/webots/issues/3504
             mode = 'normal'
         else:
             mode = 'fast'
@@ -333,7 +332,7 @@ class WebotsSim(SupervisorController, AbstractSim):
     def set_joint_position(self, joint_name, position, scaled=False, relative=False, robot_index=1):
         if robot_index == "refbot":
             raise NotImplementedError
-        self.robot_controller.set_joint_goal_position(joint_name, position)
+        self.robot_controller.set_joint_goal_position(joint_name, position, scaled=scaled)
 
     def set_alpha(self, alpha, robot_index=1):
         if robot_index != "refbot":
@@ -494,10 +493,10 @@ class WebotsSim(SupervisorController, AbstractSim):
         return self.robot_controller.accel.getValues()
 
     def close(self):
-        os.killpg(os.getpgid(self.sim_proc.pid), sig.SIGTERM)
-        # self.sim_proc.terminate()
-        # self.sim_proc.wait()
-        # self.sim_proc.kill()
+        process = psutil.Process(self.sim_proc.pid)
+        for proc in process.children(recursive=True):
+            proc.kill()
+        process.kill()
 
 
 class WebotsPressureFilter:

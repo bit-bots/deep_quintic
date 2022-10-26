@@ -5,14 +5,13 @@ from bitbots_moveit_bindings import set_moveit_parameters
 from bitbots_moveit_bindings.libbitbots_moveit_bindings import initRos
 from rclpy.node import Node
 import os
-import signal as sig
 
 import numpy as np
 from bitbots_msgs.msg import FootPressure
 from geometry_msgs.msg import Twist
 from numpy import random
 import gym
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, JointState
 
 from transforms3d.euler import quat2euler
 
@@ -63,8 +62,6 @@ class DeepQuinticEnv(gym.Env):
         @param trajectory_file: file containing reference trajectory. without the environment will not use it
         @param early_termination: if episode should be terminated early when robot falls
         """
-        # make sure that we can always close the webots subprocess correctly
-        sig.signal(sig.SIGTERM, self.close)
 
         self.node = node
         self.gui = gui
@@ -161,7 +158,6 @@ class DeepQuinticEnv(gym.Env):
             self.step_freq = step_freq
             self.env_timestep = 1 / step_freq
 
-
         # ep_length_in_s is in seconds, compute how many steps this is
         self.max_episode_steps = ep_length_in_s * step_freq
         DeepQuinticEnv.metadata['video.frames_per_second'] = step_freq
@@ -186,7 +182,6 @@ class DeepQuinticEnv(gym.Env):
             self.refbot.set_alpha(0.5)
         else:
             self.refbot = Robot(node, used_joints=used_joints, robot_type=self.robot_type)
-
         # load trajectory if provided
         self.trajectory = None
         self.engine = None
@@ -425,15 +420,22 @@ class DeepQuinticEnv(gym.Env):
         else:
             if reset:
                 imu_msg = Imu()
-                imu_msg.orientation.w = 1
+                imu_msg.orientation.w = 1.0
                 left_pressure = FootPressure()
                 right_pressure = FootPressure()
+                joint_msg = JointState()
             else:
-                imu_msg = self.robot.get_imu_msg()
-                left_pressure = self.robot.get_pressure(left=True, filtered=True, time=False)
-                right_pressure = self.robot.get_pressure(left=False, filtered=True, time=False)
+                imu_msg = Imu()
+                imu_msg.orientation.w = 1.0
+                left_pressure = FootPressure()
+                right_pressure = FootPressure()
+                joint_msg = self.robot.get_joint_state_msg()
+                # dont use the stabilization part of the walk engine
+                #imu_msg = self.robot.get_imu_msg()
+                #left_pressure = self.robot.get_pressure(left=True, filtered=True, time=False)
+                #right_pressure = self.robot.get_pressure(left=False, filtered=True, time=False)
             result = self.engine.step(timestep, cmd_vel_to_twist(self.current_command_speed), imu_msg,
-                                      self.robot.get_joint_state_msg(), left_pressure, right_pressure)
+                                      joint_msg, left_pressure, right_pressure)
         if self.ros_debug:
             self.engine.publish_debug()
         phase = self.engine.get_phase()
@@ -501,10 +503,9 @@ class DeepQuinticEnv(gym.Env):
             else:
                 action = []
                 i = 0
-                for joint_name in self.robot.used_joint_names:
-                    joint = self.robot.joints[joint_name]
+                for joint_name in self.robot.used_joint_names:                    
                     ref_position = self.refbot.joint_positions[i]
-                    scaled_position = joint.convert_radiant_to_scaled(ref_position)
+                    scaled_position = self.sim.convert_radiant_to_scaled(joint_name, ref_position)
                     action.append(scaled_position)
                     i += 1
             action = np.array(action)
@@ -605,7 +606,7 @@ class DeepQuinticEnv(gym.Env):
         else:
             # reset the engine to start of step and compute refbot accordingly
             self.engine.special_reset("START_MOVEMENT", 0.0, cmd_vel_to_twist((0.0, 0.0, 0.0), True), True)
-            self.refbot_compute_next_step(0.0001)
+            self.refbot_compute_next_step(0.0001, True)
             self.refbot.step()
             self.refbot.solve_ik_exactly()
             action_mu = self.robot.get_init_mu(self.cartesian_action, self.rot_type, self.refbot)
@@ -647,19 +648,18 @@ def cmd_vel_to_twist(cmd_vel, stop=False):
 
 class WolfgangWalkEnv(DeepQuinticEnv):
 
-    def __init__(self, simulator_type="pybullet", reward_function="CartesianActionVelReward", step_freq=30,
+    def __init__(self, simulator_type="webots", reward_function="CartesianActionVelReward", step_freq=30,
                  ros_debug=False,
                  gui=False, trajectory_file=None, ep_length_in_s=10, use_engine=True,
                  cartesian_state=True, cartesian_action=True, relative=False, use_state_buffer=False,
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
-                 randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
+                 randomize=False, use_complementary_filter=True, random_head_movement=False, adaptive_phase=False,
                  random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None):
         if node is None:
             rclpy.init()
             node_name = 'walking_env' + "_anon_" + str(os.getpid()) + "_" + str(random.randint(0, 10000000))
             node = Node(node_name)
-
         DeepQuinticEnv.__init__(self, simulator_type=simulator_type, reward_function=reward_function,
                                 used_joints="Legs", step_freq=step_freq, ros_debug=ros_debug, gui=gui,
                                 trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -673,3 +673,37 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
                                 use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, walk_parameter_file=walk_parameter_file)
+
+class CartesianEulerEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type, simulator_type=simulator_type)
+
+class CartesianFusedEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        rot_type="fused", simulator_type=simulator_type)
+       
+class CartesianQuaternionEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        rot_type="quat", simulator_type=simulator_type)
+
+class CartesianSixdEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type, 
+        rot_type="sixd", simulator_type=simulator_type)
+
+class JointEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        cartesian_action=False, cartesian_state=False, reward_function="JointActionVelReward", simulator_type=simulator_type)
+
+class CartesianEulerStateEnv(CartesianEulerEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        CartesianEulerEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        reward_function="CartesianStateVelReward", simulator_type=simulator_type)
+    
+class CartesianEulerNoncyclicEnv(CartesianEulerEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        CartesianEulerEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        cyclic_phase=False, simulator_type=simulator_type)

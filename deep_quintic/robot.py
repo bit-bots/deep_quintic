@@ -795,9 +795,9 @@ class Robot:
             imu_quat = euler2quat(*self.imu_rpy, axes='sxyz')
         # change to ros standard
         quat = wxyz2xyzw(imu_quat)
-        self.imu_msg.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
-        self.imu_msg.angular_velocity = Vector3(x=self.imu_ang_vel[0], y=self.imu_ang_vel[1], z=self.imu_ang_vel[2])
-        self.imu_msg.linear_acceleration = Vector3(x=self.imu_lin_acc[0], y=self.imu_lin_acc[1], z=self.imu_lin_acc[2])
+        self.imu_msg.orientation = Quaternion(x=float(quat[0]), y=float(quat[1]), z=float(quat[2]), w=float(quat[3]))
+        self.imu_msg.angular_velocity = Vector3(x=float(self.imu_ang_vel[0]), y=float(self.imu_ang_vel[1]), z=float(self.imu_ang_vel[2]))
+        self.imu_msg.linear_acceleration = Vector3(x=float(self.imu_lin_acc[0]), y=float(self.imu_lin_acc[1]), z=float(self.imu_lin_acc[2]))
         return self.imu_msg
 
     def get_pose_msg(self):
@@ -813,7 +813,7 @@ class Robot:
             self.joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
         if self.joint_positions is None:
             self.joint_positions, self.joint_velocities, self.joint_torques = self.sim.get_joint_values(
-                self.used_joint_names, scaled=False, robot_index=self.robot_index)
+                self.used_joint_names, scaled=False, robot_index=self.robot_index)        
         self.joint_state_msg.position = self.joint_positions
         if self.joint_velocities is not None:
             self.joint_state_msg.velocity = self.joint_velocities

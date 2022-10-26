@@ -227,10 +227,22 @@ class JointSpaceState(BaseState):
             # values have been provided by ROS
             joint_positions = deepcopy(self.env.robot.joint_positions)
             joint_velocities = deepcopy(self.env.robot.joint_velocities)
+        if scaled:
+            i = 0
+            positions = []
+            velocities = []
+            for joint_name in self.env.robot.used_joint_names:
+                scaled_position = self.env.sim.convert_radiant_to_scaled(joint_name, joint_positions[i])                                        
+                positions.append(scaled_position)
+                velocities.append(joint_velocities[i] / 10.0)
+                i+=1
+            joint_positions = positions
+            joint_velocities = velocities
         output["joint_positions"] = joint_positions
         if self.leg_vel_in_state:
             output["joint_velocities"] = joint_velocities
-        for key, value in output.items():
-            if np.min(value) < -1 or np.max(value) > 1:
-                print(f"Value for {key} was {value}")
+        if scaled and False:
+            for key, value in output.items():
+                if np.min(value) < -1 or np.max(value) > 1:
+                    print(f"Value for {key} was {value}")
         return output

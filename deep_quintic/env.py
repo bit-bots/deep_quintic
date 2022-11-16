@@ -700,10 +700,10 @@ class JointEnv(WolfgangWalkEnv):
 
 class CartesianEulerStateEnv(CartesianEulerEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
-        CartesianEulerEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
         reward_function="CartesianStateVelReward", simulator_type=simulator_type)
     
 class CartesianEulerNoncyclicEnv(CartesianEulerEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
-        CartesianEulerEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
         cyclic_phase=False, simulator_type=simulator_type)

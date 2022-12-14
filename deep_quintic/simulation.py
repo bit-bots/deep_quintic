@@ -254,8 +254,13 @@ class WebotsSim(SupervisorController, AbstractSim):
                 arguments.append("--minimize")
                 arguments.append("--no-rendering")
                 arguments.append("--stdout")
-                arguments.append("--stderr")
-            self.sim_proc = subprocess.Popen(arguments)
+                arguments.append("--stderr")            
+            # remove this environment variable since webots does not work with this
+            try:
+                os.environ.pop("QT_QPA_PLATFORM_PLUGIN_PATH")
+            except:
+                pass
+            self.sim_proc = subprocess.Popen(arguments, env=os.environ.copy())            
 
             os.environ["WEBOTS_PID"] = str(self.sim_proc.pid)
 

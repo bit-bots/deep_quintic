@@ -45,6 +45,12 @@ register(
 )
 
 register(
+    id='JointNobiasEnv-v1',
+    entry_point='deep_quintic:JointEnv',
+    max_episode_steps=10000,
+)
+
+register(
     id='CartesianEulerStateEnv-v1',
     entry_point='deep_quintic:CartesianEulerStateEnv',
     max_episode_steps=10000,

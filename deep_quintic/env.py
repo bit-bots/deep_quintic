@@ -321,7 +321,7 @@ class DeepQuinticEnv(gym.Env):
                 # take random speed values but check for each if the engine can solve these
                 self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
                                                 random.uniform(*self.cmd_vel_current_bounds[1]),
-                                                random.uniform(*self.cmd_vel_current_bounds[2])]
+                                                random.uniform(*self.cmd_vel_current_bounds[2])]            
                 if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
                     break 
             """# make sure that the combination of x and y speed is not too low or too high
@@ -694,6 +694,11 @@ class CartesianSixdEnv(WolfgangWalkEnv):
         rot_type="sixd", simulator_type=simulator_type)
 
 class JointEnv(WolfgangWalkEnv):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
+        WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
+        cartesian_action=False, cartesian_state=False, reward_function="JointActionVelReward", simulator_type=simulator_type)
+
+class JointNobiasEnv(WolfgangWalkEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
         WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
         cartesian_action=False, cartesian_state=False, reward_function="JointActionVelReward", simulator_type=simulator_type)

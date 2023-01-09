@@ -96,7 +96,9 @@ class Robot:
                                             "LShoulderPitch": 75, "LShoulderRoll": 0, "LElbow": 36,
                                             "RShoulderPitch": -75, "RShoulderRoll": 0, "RElbow": -36, "HeadPan": 0,
                                             "HeadTilt": 0}
-
+            self.init_arm_positions = []
+            for arm_joint in ["LShoulderPitch", "LShoulderRoll", "LElbow", "RShoulderPitch", "RShoulderRoll", "RElbow"]:
+                self.init_arm_positions.append(math.radians(self.initial_joint_positions[arm_joint]))
             self.leg_joints = ["LAnklePitch", "LAnkleRoll", "LHipPitch", "LHipRoll", "LHipYaw", "LKnee",
                                "RAnklePitch", "RAnkleRoll", "RHipPitch", "RHipRoll", "RHipYaw", "RKnee"]
             self.head_pan_name = "HeadPan"

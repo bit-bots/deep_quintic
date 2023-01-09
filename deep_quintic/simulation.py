@@ -221,6 +221,9 @@ class PybulletSim(Simulation, AbstractSim):
         rgb_array = rgb_array[:, :, :3]
         return rgb_array
 
+    def get_time(self):
+        return self.time
+
     def close(self):
         pass
 
@@ -496,6 +499,9 @@ class WebotsSim(SupervisorController, AbstractSim):
 
     def get_imu_lin_acc(self):
         return self.robot_controller.accel.getValues()
+
+    def get_time(self):
+        return self.time
 
     def close(self):
         process = psutil.Process(self.sim_proc.pid)

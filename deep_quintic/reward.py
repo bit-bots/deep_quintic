@@ -475,8 +475,14 @@ class FootActionReward(AbstractReward):
                                                              self.env.refbot.previous_right_foot_pos,
                                                              quat2euler(self.env.refbot.previous_right_foot_quat),
                                                              self.env.rot_type)
-
-        action_diff = np.linalg.norm(np.array(self.env.last_leg_action) - ref_action)
+        action = np.array(self.env.last_leg_action)
+        if self.env.adaptive_phase:
+            # also compare the adaptive phase action and give reward for being close to normal timestep
+            action = np.append(action, np.array([self.env.last_adaptive_phase_action]))
+            time_of_single_step = 0.5 / self.env.engine_freq
+            default_phase_step = (self.env.env_timestep / time_of_single_step) * 2 - 1            
+            ref_action = np.append(ref_action, np.array([default_phase_step]))        
+        action_diff = np.linalg.norm(action - ref_action)
         return math.exp(-self.factor * (action_diff ** 2))
 
 
@@ -585,7 +591,11 @@ class JointPositionActionReward(AbstractReward):
                     self.env.robot.joint_positions + self.env.relative_scaling_joint_action * self.env.last_leg_action)
             else:
                 action = self.env.last_leg_action
-            action_diff = np.linalg.norm(scaled_ref_positions - action)
+            if self.env.used_joints == "LegsAndArms":
+                # dont take the arm servos into account, only the leg servos
+                action_diff = np.linalg.norm(scaled_ref_positions[:12] - action[:12])
+            else:
+                action_diff = np.linalg.norm(scaled_ref_positions - action)
             reward = math.exp(-self.factor * action_diff ** 2)
             return reward
 

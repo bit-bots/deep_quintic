@@ -8,6 +8,7 @@ from bitbots_utils.utils import get_parameters_from_ros_yaml
 from humanoid_league_msgs.msg import RobotControlState
 from parallel_parameter_search.utils import load_yaml_to_param
 from rclpy.duration import Duration
+from std_msgs.msg import Float32MultiArray
 
 import deep_quintic
 import argparse
@@ -90,7 +91,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                          terrain_height=terrain_height, foot_sensors_type=foot_sensors_type,
                          phase_in_state=phase_in_state, randomize=randomize, leg_vel_in_state=leg_vel_in_state,
                          use_complementary_filter=False, random_head_movement=False, adaptive_phase=adaptive_phase,
-                         use_gyro=use_gyro, use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type)
+                         use_gyro=use_gyro, use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, ros=True)
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
         self.node = node
@@ -100,7 +101,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.last_time = None
         walk_parameters = get_parameters_from_ros_yaml("walking",
                                                        f"{get_package_share_directory('bitbots_quintic_walk')}"
-                                                       f"/config/deep_quintic_{simulator_type}.yaml",
+                                                       f"/config/deep_quintic_{simulator_type}_wolfgang.yaml",
                                                        use_wildcard=True)
         for parameter in walk_parameters:
             if parameter.name == "engine.freq":
@@ -114,7 +115,7 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.imu_rpy = None
         self.ang_vel = None
         self.last_joint_state_time = 0
-        self.current_command_speed = (0, 0, 0)
+        self.current_command_speed = [0, 0, 0]
         self.got_stop_command = True
         self.performing_stop_step = False
         self.is_stopped = True
@@ -124,6 +125,11 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.support_publisher = self.node.create_publisher(Phase, 'walk_support_state', 1)
         self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
                                                                        1)
+        #debug
+        self.action_publisher_not_normalized = self.node.create_publisher( Float32MultiArray, "action_cartesian_pose_not_normalized", 1)
+        self.state_array_normalized_pub = self.node.create_publisher( Float32MultiArray, "state_array_normalized", 1)
+        self.current_joint_pub= self.node.create_publisher( Float32MultiArray, "current_joint", 1)
+
         self.imu_sub = self.node.create_subscription(Imu, '/imu/data', self.imu_cb, 1)
         self.joint_state_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 1)
         self.robot_state_sub = self.node.create_subscription(RobotControlState, 'robot_state', self.robot_state_cb, 1)
@@ -159,7 +165,8 @@ class ExecuteEnv(WolfgangWalkEnv):
     def apply_action(self, action):
         # only do something if we are not stopped
         if not self.is_stopped:
-            action = self.action_filter.filter(action)
+            if self.filter_actions:
+                action = self.action_filter.filter(action)
             msg = JointCommand()
             msg.header.stamp = self.node.get_clock().now().to_msg()
             msg.joint_names = self.robot.used_joint_names
@@ -168,7 +175,10 @@ class ExecuteEnv(WolfgangWalkEnv):
             msg.max_currents = [-1.0] * len(self.robot.used_joint_names)
             if self.cartesian_action:
                 left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
-                    self.robot.scale_action_to_pose(action, Rot.RPY)
+                    self.robot.scale_action_to_pose(action, self.rot_type) #todo other rotation types are not handled correctly
+                pose_action_msg = Float32MultiArray()
+                pose_action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
+                self.action_publisher_not_normalized.publish(pose_action_msg)
                 left_foot_quat = euler2quat(*left_foot_rpy)
                 right_foot_quat = euler2quat(*right_foot_rpy)
                 ik_result, success = compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat,
@@ -221,6 +231,14 @@ class ExecuteEnv(WolfgangWalkEnv):
             self.state_buffer.pop(0)
         self.state_buffer.append(observation)
 
+        # debug
+        state_msg = Float32MultiArray()
+        state_msg.data = observation.tolist()
+        self.state_array_normalized_pub.publish(state_msg)
+        joint_msg = Float32MultiArray()
+        joint_msg.data = self.current_joint_positions.tolist()
+        self.current_joint_pub.publish(joint_msg)
+
         return observation
 
     def progress_phase(self, time, action):
@@ -265,7 +283,7 @@ class ExecuteEnv(WolfgangWalkEnv):
             self.refbot.phase -= 1
 
     def current_command_speed_cb(self, msg: Twist):
-        self.current_command_speed = (msg.linear.x, msg.linear.y, msg.angular.z)
+        self.current_command_speed = [msg.linear.x, msg.linear.y, msg.angular.z]
         self.got_stop_command = msg.angular.x < 0
 
     def imu_cb(self, msg: Imu):
@@ -302,8 +320,9 @@ class ExecuteEnv(WolfgangWalkEnv):
     def run_node(self, model, venv):
         rate = self.step_freq
         state = None
+        episode_start = np.ones((1,), dtype=bool)
         # start main loop
-        while rclpy.ok():
+        while rclpy.ok():            
             next_sleep = self.node.get_clock().now() + Duration(seconds=1.0 / rate)
             if self.robot_state == RobotControlState.WALKING or (
                     self.robot_state == RobotControlState.CONTROLLABLE and (
@@ -314,26 +333,27 @@ class ExecuteEnv(WolfgangWalkEnv):
                     continue
                 # we need to normalize the observation
                 norm_obs = venv.normalize_obs(obs)
-                action, state = model.predict(norm_obs, state=state, deterministic=True)
+                action, state = model.predict(norm_obs, state=state, deterministic=True)#todo need to use this, episode_start=episode_start)
                 self.last_action = action
                 self.apply_action(action)
                 # progress phase and compute current state
-                time = self.node.get_clock().now().nanoseconds / 1.0e9
-                self.progress_phase(time, action)
-                self.ros_interface.publish_action()
+                self.time = self.node.get_clock().now().nanoseconds / 1.0e9
+                self.progress_phase(self.time, action)
+                self.ros_interface.publish()
             else:
                 # hard stop walking when falling, getting up, etc.
                 self.current_command_speed = (0, 0, 0)
                 self.is_stopped = True
 
-            self.state.publish_debug()
+            #self.state.publish_debug()
 
             #todo improve this, maybe complete asynch spin?
             # need to spin for multiple subscribers
-            for i in range(5):
+            while self.node.get_clock().now().nanoseconds < next_sleep.nanoseconds:
                 rclpy.spin_once(self.node)
 
-            self.node.get_clock().sleep_until(next_sleep)
+            # does not work because rclpy blocks and does not recieve clock messages
+            #self.node.get_clock().sleep_until(next_sleep)
 
 
 class StoreDict(argparse.Action):

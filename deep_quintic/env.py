@@ -52,7 +52,7 @@ class DeepQuinticEnv(gym.Env):
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
                  adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
-                 node: Node = None, robot_type = None, walk_parameter_file=None, rsi=True) -> None:
+                 node: Node = None, robot_type = None, walk_parameter_file=None, rsi=True, ros=False) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -90,7 +90,9 @@ class DeepQuinticEnv(gym.Env):
         self.used_joints = used_joints
         self.last_adaptive_phase_action = 0
         self.rsi = rsi
-        self.not_apply_action = False
+        self.stop_step = False
+        self.random_speed_on_reset = True
+        self.ros = ros
 
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
@@ -320,22 +322,23 @@ class DeepQuinticEnv(gym.Env):
             # set robot body accordingly
             self.robot.reset_to_reference(self.refbot, self.randomize)
         elif self.engine is not None:
-            # choose random initial state of the engine            
-            while True:
-                # take random speed values but check for each if the engine can solve these
-                self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
-                                                random.uniform(*self.cmd_vel_current_bounds[1]),
-                                                random.uniform(*self.cmd_vel_current_bounds[2])]            
-                if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
-                    break 
-            """# make sure that the combination of x and y speed is not too low or too high
-            if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.robot.cmd_vel_max_bounds[3]:
-                # decrease one of the two
-                direction = 1  # random.randint(0, 2)
-                sign = 1 if self.current_command_speed[direction] > 0 else -1
-                self.current_command_speed[direction] = sign * (abs(self.robot.cmd_vel_max_bounds[3]) - abs(
-                    self.current_command_speed[(direction + 1) % 2]))
-            """
+            # choose random initial state of the engine
+            if self.random_speed_on_reset:
+                while True:
+                    # take random speed values but check for each if the engine can solve these
+                    self.current_command_speed = [random.uniform(*self.cmd_vel_current_bounds[0]),
+                                                    random.uniform(*self.cmd_vel_current_bounds[1]),
+                                                    random.uniform(*self.cmd_vel_current_bounds[2])]            
+                    if self.engine.reset_and_test_if_speed_possible(cmd_vel_to_twist(self.current_command_speed), 0.0001):                    
+                        break 
+                """# make sure that the combination of x and y speed is not too low or too high
+                if abs(self.current_command_speed[0]) + abs(self.current_command_speed[1]) > self.robot.cmd_vel_max_bounds[3]:
+                    # decrease one of the two
+                    direction = 1  # random.randint(0, 2)
+                    sign = 1 if self.current_command_speed[direction] > 0 else -1
+                    self.current_command_speed[direction] = sign * (abs(self.robot.cmd_vel_max_bounds[3]) - abs(
+                        self.current_command_speed[(direction + 1) % 2]))
+                """
             # set command vel based on GUI input if appropriate
             if self.gui:
                 gui_cmd_vel = self.sim.read_command_vel_from_gui()
@@ -547,7 +550,7 @@ class DeepQuinticEnv(gym.Env):
             # filter action
             if self.filter_actions:
                 action = self.action_filter.filter(action)
-            if not self.not_apply_action:
+            if not self.stop_step or not 0 < self.engine.get_phase() < 1/15:
                 # apply action
                 self.action_possible = self.robot.apply_action(action, self.cartesian_action, self.relative, self.refbot,
                                                                self.rot_type)
@@ -676,7 +679,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=False, adaptive_phase=False,
-                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None, used_joints="Legs"):
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None, used_joints="Legs", ros=False):
         if node is None:
             rclpy.init()
             node_name = 'walking_env' + "_anon_" + str(os.getpid()) + "_" + str(random.randint(0, 10000000))
@@ -693,7 +696,7 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
-                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, walk_parameter_file=walk_parameter_file)
+                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, walk_parameter_file=walk_parameter_file, ros=ros)
 
 class CartesianEulerEnv(WolfgangWalkEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots", 

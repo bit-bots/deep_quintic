@@ -217,7 +217,7 @@ class JointSpaceState(BaseState):
 
     def get_state_entries(self, scaled):
         output = super(JointSpaceState, self).get_state_entries(scaled)
-        if self.env.robot.joint_positions is None:
+        if not self.env.ros:
             # we are running in simulation, get the values
             joint_positions, joint_velocities, joint_torques = self.env.sim.get_joint_values(
                 self.env.robot.used_joint_names, scaled, self.env.robot.robot_index)

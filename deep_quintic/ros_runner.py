@@ -331,6 +331,8 @@ class ExecuteEnv(WolfgangWalkEnv):
                 obs = self.compute_observation()
                 if obs is None:
                     continue
+                # update normalization statistics
+                venv.obs_rms.update(obs)
                 # we need to normalize the observation
                 norm_obs = venv.normalize_obs(obs)
                 action, state = model.predict(norm_obs, state=state, deterministic=True)#todo need to use this, episode_start=episode_start)

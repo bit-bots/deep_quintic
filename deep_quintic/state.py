@@ -78,17 +78,16 @@ class BaseState(PhaseState):
     def __init__(self, env: "DeepQuinticEnv", use_foot_sensors, randomize):
         super().__init__(env)
         self.use_foot_sensors = use_foot_sensors
-        self.randomize = False  # todo deactivated
+        self.randomize = randomize
 
     def get_state_entries(self, scaled):
         output = super(BaseState, self).get_state_entries(scaled)
         # it only makes sense to display IMU rot in fused or RPY since we do not have yaw direction
-        # todo they are all originally computed from euler. can this lead to problems?
         if self.env.use_imu_orientation:
             rpy = deepcopy(self.env.robot.imu_rpy)
             if self.randomize and len(rpy) == 3:
                 for i in range(3):
-                    rpy[i] = random.gauss(rpy[i], 0.05)
+                    rpy[i] = random.gauss(rpy[i], 0.20)
             if self.env.rot_type == Rot.RPY:
                 roll = rpy[0]
                 pitch = rpy[1]
@@ -115,7 +114,7 @@ class BaseState(PhaseState):
             ang_vel = deepcopy(self.env.robot.imu_ang_vel)
             if self.randomize:
                 for i in range(3):
-                    ang_vel[i] = random.gauss(ang_vel[i], 0.2)
+                    ang_vel[i] = random.gauss(ang_vel[i], 2.0)
             if scaled:
                 ang_vel = ang_vel / np.array(20)
             output["ang_vel"] = ang_vel

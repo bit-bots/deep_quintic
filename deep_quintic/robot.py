@@ -692,7 +692,6 @@ class Robot:
         return motor_goal
 
     def scale_action_to_pose(self, action, rot_type):
-        # todo here we convert first to euler since our scaling is in this, maybe change this directly to quat somehow
         # action is structured as left_pos, left_rot, right_pos, right_rot
         # based on rot type we have different number of values. first transform to RpY then scale
         if rot_type == Rot.RPY:
@@ -701,7 +700,6 @@ class Robot:
         elif rot_type == Rot.FUSED:
             left_fused = action[3:6]
             right_fused = action[9:13]
-            # todo check if hemi is correct
             left_rpy = np.array(quat2euler(fused2quat(*left_fused, True)))
             right_rpy = np.array(quat2euler(fused2quat(*right_fused, True)))
             # stitch it back together

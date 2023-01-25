@@ -288,7 +288,6 @@ class DeepQuinticEnv(gym.Env):
 
     def randomize_domain(self):
         # todo
-        # latency -> needs a lot of changes
         # joint friction -> would need to reload URDF
         # joint damping -> would need to reload URDF. or changeDynamics()?
         # contact stiffness

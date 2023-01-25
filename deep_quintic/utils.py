@@ -70,3 +70,6 @@ def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, u
 
 def scale_joint_position(unscaled, mid_position, upper_limit, lower_limit):
     return 2 * (unscaled - mid_position) / (upper_limit - lower_limit)
+
+def unscale_joint_position(scaled, mid_position, upper_limit, lower_limit):
+    return scaled * (upper_limit - lower_limit) / 2 + mid_position

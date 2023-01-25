@@ -188,7 +188,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                                                 collision=False, approximate=True)
                 msg.positions = list(ik_result)
             else:
-                msg.positions = self.robot.joints_scaled_to_radiant(action)
+                msg.positions = self.robot.joints_scaled_to_radiant(action, use_sim=False)
             self.joint_publisher.publish(msg)
 
             # support state is necessary for odometry

@@ -16,7 +16,7 @@ from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, Vector3
 
 from deep_quintic.complementary_filter import ComplementaryFilter
 from deep_quintic.simulation import AbstractSim, PybulletSim
-from deep_quintic.utils import Rot, compute_ik
+from deep_quintic.utils import Rot, compute_ik, unscale_joint_position
 from bitbots_utils.transforms import fused2quat, sixd2quat, quat2fused, quat2sixd, wxyz2xyzw, xyzw2wxyz, \
     compute_imu_orientation_from_world
 
@@ -238,6 +238,23 @@ class Robot:
         else:
             print(f"No joints specified for robot type {self.robot_type}")
             exit()
+
+        if self.robot_type != "wolfgang":
+            print("no hardcoded joint scaling implemented for this robot")
+            self.joint_scaling = None
+        else:
+            self.joint_scaling = {"LAnklePitch": (0.2618, 1.74533, -1.22173),
+                                    "LAnkleRoll": (0.0, 1.0472, -1.0472),
+                                    "LHipPitch": (0.08727, 2.0944, -1.91986),
+                                    "LHipRoll": (0.0, 1.5708, -1.5708),
+                                    "LHipYaw": (0.0, 1.5708, -1.5708),
+                                    "LKnee": (1.48353, 2.96706, 0.0),
+                                    "RAnklePitch": (-0.2618, 1.22173, -1.74533),
+                                    "RAnkleRoll": (0.0, 1.0472, -1.0472),
+                                    "RHipPitch": (-0.08727, 1.91986, -2.0944),
+                                    "RHipRoll": (0.0, 1.5708, -1.5708),
+                                    "RHipYaw": (0.0, 1.5708, -1.5708),
+                                    "RKnee": (-1.48353, 0.0, -2.96706)}
 
         # right is same just y pos is inverted
         self.cartesian_limits_right = self.cartesian_limits_left.copy()
@@ -683,11 +700,14 @@ class Robot:
             i += 1
         return scaled
 
-    def joints_scaled_to_radiant(self, action):
+    def joints_scaled_to_radiant(self, action, use_sim=True):
         motor_goal = []
         i = 0
         for joint_name in self.used_joint_names:
-            motor_goal.append(self.sim.convert_scaled_to_radiant(joint_name, action[i], self.robot_index))
+            if use_sim:
+                motor_goal.append(self.sim.convert_scaled_to_radiant(joint_name, action[i], self.robot_index))
+            else:
+                motor_goal.append(unscale_joint_position(action[i], *self.joint_scaling[joint_name]))
             i += 1
         return motor_goal
 

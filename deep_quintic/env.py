@@ -105,10 +105,10 @@ class DeepQuinticEnv(gym.Env):
 
         self.domain_rand_bounds = {
             # percentages
-            "mass": (0.8, 1.2),
+            "mass": (0.5, 1.5),
             "inertia": (0.5, 1.5),
-            "motor_torque": (0.8, 1.2),
-            "motor_vel": (0.8, 1.2),
+            "motor_torque": (0.5, 10.0),
+            "motor_vel": (0.5, 1.0),
             # absolute values
             "lateral_friction": [0.5, 1.25],  # Lateral friction coefficient (dimensionless)
             "spinning_friction": [0.01, 0.2],  # Spinning friction coefficient (dimensionless)

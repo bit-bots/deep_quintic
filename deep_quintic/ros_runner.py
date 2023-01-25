@@ -9,6 +9,7 @@ from humanoid_league_msgs.msg import RobotControlState
 from parallel_parameter_search.utils import load_yaml_to_param
 from rclpy.duration import Duration
 from std_msgs.msg import Float32MultiArray
+from bitbots_msgs.msg import Float32MultiArrayStamped
 
 import deep_quintic
 import argparse
@@ -126,9 +127,9 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
                                                                        1)
         #debug
-        self.action_publisher_not_normalized = self.node.create_publisher( Float32MultiArray, "action_cartesian_pose_not_normalized", 1)
-        self.state_array_normalized_pub = self.node.create_publisher( Float32MultiArray, "state_array_normalized", 1)
-        self.current_joint_pub= self.node.create_publisher( Float32MultiArray, "current_joint", 1)
+        self.action_publisher_not_normalized = self.node.create_publisher( Float32MultiArrayStamped, "action_cartesian_pose_not_normalized", 1)
+        self.state_array_normalized_pub = self.node.create_publisher( Float32MultiArrayStamped, "state_array_normalized", 1)
+        self.current_joint_pub= self.node.create_publisher( Float32MultiArrayStamped, "current_joint", 1)
 
         self.imu_sub = self.node.create_subscription(Imu, '/imu/data', self.imu_cb, 1)
         self.joint_state_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 1)
@@ -176,8 +177,9 @@ class ExecuteEnv(WolfgangWalkEnv):
             if self.cartesian_action:
                 left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
                     self.robot.scale_action_to_pose(action, self.rot_type) #todo other rotation types are not handled correctly
-                pose_action_msg = Float32MultiArray()
-                pose_action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
+                pose_action_msg = Float32MultiArrayStamped()
+                pose_action_msg.array.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
+                pose_action_msg.header.stamp = self.node.get_clock().now().to_msg()
                 self.action_publisher_not_normalized.publish(pose_action_msg)
                 left_foot_quat = euler2quat(*left_foot_rpy)
                 right_foot_quat = euler2quat(*right_foot_rpy)
@@ -232,11 +234,13 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.state_buffer.append(observation)
 
         # debug
-        state_msg = Float32MultiArray()
-        state_msg.data = observation.tolist()
+        state_msg = Float32MultiArrayStamped()
+        state_msg.array.data = observation.tolist()
+        state_msg.header.stamp = self.node.get_clock().now().to_msg()
         self.state_array_normalized_pub.publish(state_msg)
-        joint_msg = Float32MultiArray()
-        joint_msg.data = self.current_joint_positions.tolist()
+        joint_msg = Float32MultiArrayStamped()
+        joint_msg.array.data = self.current_joint_positions.tolist()
+        joint_msg.header.stamp = self.node.get_clock().now().to_msg()
         self.current_joint_pub.publish(joint_msg)
 
         return observation
@@ -335,7 +339,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 venv.obs_rms.update(obs)
                 # we need to normalize the observation
                 norm_obs = venv.normalize_obs(obs)
-                action, state = model.predict(norm_obs, state=state, deterministic=True)#todo need to use this, episode_start=episode_start)
+                action, state = model.predict(norm_obs, state=state, deterministic=True)
                 self.last_action = action
                 self.apply_action(action)
                 # progress phase and compute current state
@@ -348,8 +352,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                 self.is_stopped = True
 
             #self.state.publish_debug()
-
-            #todo improve this, maybe complete asynch spin?
+            
             # need to spin for multiple subscribers
             while self.node.get_clock().now().nanoseconds < next_sleep.nanoseconds:
                 rclpy.spin_once(self.node)

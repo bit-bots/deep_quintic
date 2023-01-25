@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from transforms3d.euler import euler2quat, quat2euler
 
-from deep_quintic.utils import Rot
+from deep_quintic.utils import Rot, scale_joint_position
 from bitbots_utils.transforms import wxyz2xyzw, quat2fused, quat2sixd
 
 if TYPE_CHECKING:
@@ -214,6 +214,23 @@ class JointSpaceState(BaseState):
     def __init__(self, env: "DeepQuinticEnv", use_foot_sensors, leg_vel_in_state, randomize):
         super().__init__(env, use_foot_sensors, randomize)
         self.leg_vel_in_state = leg_vel_in_state
+        if env.ros and env.robot_type != "Wolfang":
+            print("no hardcoded joint scaling implemented for this robot")
+            exit("")
+        else:
+            self.joint_scaling = {"LAnklePitch": (0.2618, 1.74533, -1.22173),
+                                    "LAnkleRoll": (0.0, 1.0472, -1.0472),
+                                    "LHipPitch": (0.08727, 2.0944, -1.91986),
+                                    "LHipRoll": (0.0, 1.5708, -1.5708),
+                                    "LHipYaw": (0.0, 1.5708, -1.5708),
+                                    "LKnee": (1.48353, 2.96706, 0.0),
+                                    "RAnklePitch": (-0.2618, 1.22173, -1.74533),
+                                    "RAnkleRoll": (0.0, 1.0472, -1.0472),
+                                    "RHipPitch": (-0.08727, 1.91986, -2.0944),
+                                    "RHipRoll": (0.0, 1.5708, -1.5708),
+                                    "RHipYaw": (0.0, 1.5708, -1.5708),
+                                    "RKnee": (-1.48353, 0.0, -2.96706)}
+
 
     def get_state_entries(self, scaled):
         output = super(JointSpaceState, self).get_state_entries(scaled)
@@ -232,7 +249,12 @@ class JointSpaceState(BaseState):
             positions = []
             velocities = []
             for joint_name in self.env.robot.used_joint_names:
-                scaled_position = self.env.sim.convert_radiant_to_scaled(joint_name, joint_positions[i])                                        
+                if not self.env.ros:
+                    # get scaling from simulation
+                    scaled_position = self.env.sim.convert_radiant_to_scaled(joint_name, joint_positions[i])
+                else:
+                    # use hardcoded scaling as we dont have a simulation
+                    scaled_position = scale_joint_position(joint_positions[i], *self.joint_scaling[joint_name])
                 positions.append(scaled_position)
                 velocities.append(joint_velocities[i] / 10.0)
                 i+=1
@@ -245,4 +267,4 @@ class JointSpaceState(BaseState):
             for key, value in output.items():
                 if np.min(value) < -1 or np.max(value) > 1:
                     print(f"Value for {key} was {value}")
-        return output
+        return output    

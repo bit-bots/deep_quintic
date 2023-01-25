@@ -4,7 +4,7 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from bitbots_msgs.msg import FootPressure, JointCommand
+from bitbots_msgs.msg import FootPressure, JointCommand, Float32MultiArrayStamped
 from geometry_msgs.msg import Point, Quaternion, Vector3, PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.time import Time
@@ -50,7 +50,7 @@ class ROSDebugInterface:
         self.true_odom_publisher = self.env.node.create_publisher(Odometry, "debug/true_odom", 1)
 
         self.action_publisher = self.env.node.create_publisher(Float32MultiArray, "debug/action", 1)
-        self.action_publisher_not_normalized = self.env.node.create_publisher( Float32MultiArray, "debug/action_cartesian_pose_not_normalized", 1)
+        self.action_publisher_not_normalized = self.env.node.create_publisher( Float32MultiArrayStamped, "debug/action_cartesian_pose_not_normalized", 1)
         self.refbot_joint_publisher = self.env.node.create_publisher(JointState, "debug/ref_joint_states", 1)
         self.refbot_left_foot_publisher = self.env.node.create_publisher(PoseStamped, "debug/ref_left_foot", 1)
         self.refbot_right_foot_publisher = self.env.node.create_publisher(PoseStamped, "debug/ref_right_foot", 1)
@@ -78,10 +78,11 @@ class ROSDebugInterface:
             self.action_publisher.publish(action_msg)
 
         if self.action_publisher_not_normalized.get_subscription_count() > 0:
-            action_msg = Float32MultiArray()
+            action_msg = Float32MultiArrayStamped()
             left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy = \
                 self.env.robot.scale_action_to_pose(self.env.last_action, self.env.rot_type)
-            action_msg.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
+            action_msg.array.data = np.concatenate([left_foot_pos, left_foot_rpy, right_foot_pos, right_foot_rpy]).tolist()
+            action_msg.header.stamp = self.env.node.get_clock().now().to_msg()
             self.action_publisher_not_normalized.publish(action_msg)
 
     def publish_vels(self):

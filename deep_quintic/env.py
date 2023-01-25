@@ -1,3 +1,4 @@
+from copy import deepcopy
 import rcl_interfaces.msg
 import rclpy
 from ament_index_python import get_package_share_directory
@@ -52,7 +53,7 @@ class DeepQuinticEnv(gym.Env):
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True,
                  adaptive_phase=False, random_force=False, use_gyro=True, use_imu_orientation=True,
-                 node: Node = None, robot_type = None, walk_parameter_file=None, rsi=True, ros=False) -> None:
+                 node: Node = None, robot_type = None, walk_parameter_file=None, rsi=True, ros=False, use_previous_state=False) -> None:
         """
         @param reward_function: a reward object that specifies the reward function
         @param used_joints: which joints should be enabled
@@ -93,6 +94,8 @@ class DeepQuinticEnv(gym.Env):
         self.stop_step = False
         self.random_speed_on_reset = True
         self.ros = ros
+        self.use_previous_state = use_previous_state
+        self.previous_state = None
 
         self.reward_function = eval(reward_function)(self)
         self.rot_type = {'rpy': Rot.RPY,
@@ -380,9 +383,20 @@ class DeepQuinticEnv(gym.Env):
         self.step_count = 0
         self.episode_start_time = self.time
         self.reward_function.reset_episode_reward()
+        # do extra simulation step to get previous state
+        if self.use_previous_state:
+            self.previous_state = self.state.get_state_array(scaled=True)
+            obs = deepcopy(self.previous_state)
+            for i in range(self.sim_steps):
+                self.step_simulation()
+            self.robot.update()
+            self.refbot.step()
+            self.refbot_compute_next_step(timestep=None)
         # return robot state and current phase value
         # since we did a reset, we will fill the buffer with the same exact states and 0 actions
         current_state = self.state.get_state_array(scaled=True)
+        if self.use_previous_state:
+            self.previous_state = deepcopy(current_state)
         self.state_buffer = [current_state] * self.state_buffer_size
         self.action_buffer = [[0] * self.num_actions] * self.action_buffer_size
         if self.filter_actions:
@@ -398,7 +412,10 @@ class DeepQuinticEnv(gym.Env):
                 exit()
         if self.gui:
             self.refbot.update_ref_in_sim()
-        return self.create_state_from_buffer()
+        if self.use_previous_state:
+            return obs
+        else:
+            return self.create_state_from_buffer()
 
     def create_state_from_buffer(self):
         if self.state_buffer_size == 1 and self.action_buffer_size == 0:
@@ -604,7 +621,11 @@ class DeepQuinticEnv(gym.Env):
             self.action_buffer.pop(0)
             self.action_buffer.append(self.last_action)
 
-        obs = self.create_state_from_buffer()
+        if self.use_previous_state:
+            obs = deepcopy(self.previous_state)
+            self.previous_state = deepcopy(current_state)
+        else:
+            obs = self.create_state_from_buffer()
         # if not np.isfinite(obs).all():
         #    raise AssertionError
         # if not np.isfinite(reward).all():
@@ -679,7 +700,8 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=False, adaptive_phase=False,
-                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None, used_joints="Legs", ros=False):
+                 random_force=False, use_gyro=True, use_imu_orientation=True, node=None, robot_type="wolfgang", walk_parameter_file=None, 
+                 used_joints="Legs", ros=False, use_previous_state=False):
         if node is None:
             rclpy.init()
             node_name = 'walking_env' + "_anon_" + str(os.getpid()) + "_" + str(random.randint(0, 10000000))
@@ -696,17 +718,18 @@ class WolfgangWalkEnv(DeepQuinticEnv):
                                 use_complementary_filter=use_complementary_filter,
                                 random_head_movement=random_head_movement,
                                 adaptive_phase=adaptive_phase, random_force=random_force, use_gyro=use_gyro,
-                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, walk_parameter_file=walk_parameter_file, ros=ros)
+                                use_imu_orientation=use_imu_orientation, node=node, robot_type=robot_type, 
+                                walk_parameter_file=walk_parameter_file, ros=ros, use_previous_state=use_previous_state)
 
 class CartesianEulerEnv(WolfgangWalkEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots", 
                 foot_sensors_type="", leg_vel_in_state=False,
                 random_head_movement=False, randomize=False, terrain_height=0,
-                adaptive_phase=False, random_force=False):
+                adaptive_phase=False, random_force=False, use_previous_state=False):
         WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type, 
         simulator_type=simulator_type, foot_sensors_type=foot_sensors_type, leg_vel_in_state=leg_vel_in_state,
         random_head_movement=random_head_movement, randomize=randomize, terrain_height=terrain_height,
-        adaptive_phase=adaptive_phase, random_force=random_force)
+        adaptive_phase=adaptive_phase, random_force=random_force, use_previous_state=use_previous_state)
 
 class CartesianFusedEnv(WolfgangWalkEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):
@@ -724,10 +747,11 @@ class CartesianSixdEnv(WolfgangWalkEnv):
         rot_type="sixd", simulator_type=simulator_type)
 
 class JointEnv(WolfgangWalkEnv):
-    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots", leg_vel_in_state=False, used_joints="Legs"):
+    def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots", 
+                 leg_vel_in_state=False, used_joints="Legs", use_previous_state=False):
         WolfgangWalkEnv.__init__(self, ros_debug=ros_debug, gui=gui, walk_parameter_file=walk_parameter_file, robot_type=robot_type,
         cartesian_action=False, cartesian_state=False, reward_function="JointActionVelReward", simulator_type=simulator_type, leg_vel_in_state=leg_vel_in_state,
-        used_joints=used_joints)
+        used_joints=used_joints, use_previous_state=use_previous_state)
 
 class JointNobiasEnv(WolfgangWalkEnv):
     def __init__(self, ros_debug=False, gui=False, walk_parameter_file=None, robot_type="wolfgang", simulator_type="webots"):

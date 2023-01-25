@@ -67,3 +67,6 @@ def compute_ik(left_foot_pos, left_foot_quat, right_foot_pos, right_foot_quat, u
         print(f"ik result {ik_result}")
         success = False
     return joint_positions, success
+
+def scale_joint_position(unscaled, mid_position, upper_limit, lower_limit):
+    return 2 * (unscaled - mid_position) / (upper_limit - lower_limit)

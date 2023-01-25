@@ -20,6 +20,7 @@ from typing import Tuple, Dict, Any, Optional
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.action import ActionClient
 import stable_baselines3
@@ -43,6 +44,8 @@ from deep_quintic.robot import Robot
 from deep_quintic.state import CartesianState, BaseState
 from deep_quintic.utils import Rot, compute_ik
 from deep_quintic.reward import CartesianActionReward
+
+from rcl_interfaces.msg import SetParametersResult
 
 ALGOS = {
     "a2c": A2C,
@@ -81,7 +84,7 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
-                 use_gyro=True, use_imu_orientation=True, node: Node = None, robot_type="wolfgang"):
+                 use_gyro=True, use_imu_orientation=True, node: Node = None, robot_type="wolfgang", roll_offset=0, pitch_offset=0, ang_vel_x_offset=0, ang_vel_y_offset=0):
         super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
                          ros_debug=True, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -96,6 +99,14 @@ class ExecuteEnv(WolfgangWalkEnv):
         # use dummy pressure sensors since we are not connected to a simulation
         self.robot.pressure_sensors = defaultdict(lambda: DummyPressureSensor())
         self.node = node
+        self.roll_offset = roll_offset
+        self.pitch_offset = pitch_offset
+        self.ang_vel_x_offset = ang_vel_x_offset
+        self.ang_vel_y_offset = ang_vel_y_offset
+        self.last_state = None
+        # needs to be set manually
+        self.venv = None
+        self.model = None
 
         # additional class variables we need since we are not running the walking at the same time
         self.refbot.phase = 0
@@ -125,25 +136,25 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.joint_publisher = self.node.create_publisher(JointCommand, 'walking_motor_goals', 1)
         self.support_publisher = self.node.create_publisher(Phase, 'walk_support_state', 1)
         self.current_command_speed_sub = self.node.create_subscription(Twist, 'cmd_vel', self.current_command_speed_cb,
-                                                                       1)
+                                                                       1, callback_group=MutuallyExclusiveCallbackGroup())
         #debug
         self.action_publisher_not_normalized = self.node.create_publisher( Float32MultiArrayStamped, "action_cartesian_pose_not_normalized", 1)
         self.state_array_normalized_pub = self.node.create_publisher( Float32MultiArrayStamped, "state_array_normalized", 1)
         self.current_joint_pub= self.node.create_publisher( Float32MultiArrayStamped, "current_joint", 1)
 
-        self.imu_sub = self.node.create_subscription(Imu, '/imu/data', self.imu_cb, 1)
-        self.joint_state_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 1)
-        self.robot_state_sub = self.node.create_subscription(RobotControlState, 'robot_state', self.robot_state_cb, 1)
+        self.imu_sub = self.node.create_subscription(Imu, '/imu/data', self.imu_cb, 1, callback_group=MutuallyExclusiveCallbackGroup())
+        self.joint_state_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 1, callback_group=MutuallyExclusiveCallbackGroup())
+        self.robot_state_sub = self.node.create_subscription(RobotControlState, 'robot_state', self.robot_state_cb, 1, callback_group=MutuallyExclusiveCallbackGroup())
         if foot_sensors_type == "filtered":
             self.left_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_left/filtered',
-                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1)
+                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1, callback_group=MutuallyExclusiveCallbackGroup())
             self.right_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_right/filtered',
-                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1)
+                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1, callback_group=MutuallyExclusiveCallbackGroup())
         elif foot_sensors_type in ["raw", "binary"]:
             self.left_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_left/raw',
-                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1)
+                                                                   lambda msg: self.foot_pressure_cb(msg, True), 1, callback_group=MutuallyExclusiveCallbackGroup())
             self.right_pressure_sub = self.node.create_subscription(FootPressure, 'foot_pressure_right/raw',
-                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1)
+                                                                    lambda msg: self.foot_pressure_cb(msg, False), 1, callback_group=MutuallyExclusiveCallbackGroup())
         elif foot_sensors_type == "":
             self.got_foot_pressure = True
         else:
@@ -155,6 +166,8 @@ class ExecuteEnv(WolfgangWalkEnv):
         #    joint.name: (joint.limit.lower, joint.limit.upper) for joint in urdf.joints if joint.limit
         # }
 
+        self.node.add_on_set_parameters_callback(self.parameters_callback)
+
         # see that we got all data from the various subscribers
         for i in range(5):
             rclpy.spin_once(self.node)
@@ -162,6 +175,24 @@ class ExecuteEnv(WolfgangWalkEnv):
             self.node.get_logger().info("Waiting for data from subscribers", throttle_duration_sec=10)
             time.sleep(0.01)
             rclpy.spin_once(self.node)
+        
+    def start_timer(self, model, venv):
+        self.model = model
+        self.venv = venv
+        self.node.create_timer(1.0/ self.step_freq, callback=self.run_node, 
+                callback_group=MutuallyExclusiveCallbackGroup())
+
+    def parameters_callback(self, params):
+        for param in params:
+            if param.name == "roll_offset":
+                self.roll_offset = math.radians(param.value)
+            elif param.name == "pitch_offset":
+                self.pitch_offset = math.radians(param.value)
+            elif param.name == "ang_vel_x_offset":
+                self.ang_vel_x_offset = math.radians(param.value)
+            elif param.name == "ang_vel_y_offset":
+                self.ang_vel_y_offset = math.radians(param.value)
+        return SetParametersResult(successful=True)
 
     def apply_action(self, action):
         # only do something if we are not stopped
@@ -291,10 +322,10 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.got_stop_command = msg.angular.x < 0
 
     def imu_cb(self, msg: Imu):
-        self.imu_rpy = [*quat2euler((msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z))]
-        self.ang_vel = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
-        # self.imu_rpy = [0,0,0]
-        # self.ang_vel = [0,0,0]
+        rpy = [*quat2euler((msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z))]
+        # add the offset to compensate for unprecicely mounted IMU
+        self.imu_rpy = [rpy[0] + self.roll_offset, rpy[1] + self.pitch_offset, rpy[2]]
+        self.ang_vel = [msg.angular_velocity.x + self.ang_vel_x_offset, msg.angular_velocity.y + self.ang_vel_y_offset, msg.angular_velocity.z]
 
     def foot_pressure_cb(self, msg: FootPressure, is_left: bool):
         print("foot_pressure_cb")
@@ -321,44 +352,29 @@ class ExecuteEnv(WolfgangWalkEnv):
     def robot_state_cb(self, msg: RobotControlState):
         self.robot_state = msg.state
 
-    def run_node(self, model, venv):
-        rate = self.step_freq
-        state = None
-        episode_start = np.ones((1,), dtype=bool)
-        # start main loop
-        while rclpy.ok():            
-            next_sleep = self.node.get_clock().now() + Duration(seconds=1.0 / rate)
-            if self.robot_state == RobotControlState.WALKING or (
-                    self.robot_state == RobotControlState.CONTROLLABLE and (
-                    not self.current_command_speed == (0, 0, 0) or not self.is_stopped)):
-                # only run if we are in the correct state
-                obs = self.compute_observation()
-                if obs is None:
-                    continue
-                # update normalization statistics
-                venv.obs_rms.update(obs)
-                # we need to normalize the observation
-                norm_obs = venv.normalize_obs(obs)
-                action, state = model.predict(norm_obs, state=state, deterministic=True)
-                self.last_action = action
-                self.apply_action(action)
-                # progress phase and compute current state
-                self.time = self.node.get_clock().now().nanoseconds / 1.0e9
-                self.progress_phase(self.time, action)
-                self.ros_interface.publish()
-            else:
-                # hard stop walking when falling, getting up, etc.
-                self.current_command_speed = (0, 0, 0)
-                self.is_stopped = True
-
-            #self.state.publish_debug()
-            
-            # need to spin for multiple subscribers
-            while self.node.get_clock().now().nanoseconds < next_sleep.nanoseconds:
-                rclpy.spin_once(self.node)
-
-            # does not work because rclpy blocks and does not recieve clock messages
-            #self.node.get_clock().sleep_until(next_sleep)
+    def run_node(self):                                
+        if self.robot_state == RobotControlState.WALKING or (
+                self.robot_state == RobotControlState.CONTROLLABLE and (
+                not self.current_command_speed == (0, 0, 0) or not self.is_stopped)):
+            # only run if we are in the correct state
+            obs = self.compute_observation()
+            if obs is None:
+                return
+            # update normalization statistics                
+            self.venv.obs_rms.update(obs)
+            # we need to normalize the observation
+            norm_obs = self.venv.normalize_obs(obs)
+            action, self.last_state = self.model.predict(norm_obs, state=self.last_state, deterministic=True)
+            self.last_action = action
+            self.apply_action(action)
+            # progress phase and compute current state
+            self.time = self.node.get_clock().now().nanoseconds / 1.0e9
+            self.progress_phase(self.time, action)
+            self.ros_interface.publish()
+        else:
+            # hard stop walking when falling, getting up, etc.
+            self.current_command_speed = (0, 0, 0)
+            self.is_stopped = True
 
 
 class StoreDict(argparse.Action):

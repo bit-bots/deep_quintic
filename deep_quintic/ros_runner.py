@@ -84,7 +84,9 @@ class ExecuteEnv(WolfgangWalkEnv):
                  state_type="full", cyclic_phase=True, rot_type="rpy", filter_actions=False, terrain_height=0,
                  phase_in_state=True, foot_sensors_type="", leg_vel_in_state=False, use_rt_in_state=False,
                  randomize=False, use_complementary_filter=True, random_head_movement=True, adaptive_phase=False,
-                 use_gyro=True, use_imu_orientation=True, node: Node = None, robot_type="wolfgang", roll_offset=0, pitch_offset=0, ang_vel_x_offset=0, ang_vel_y_offset=0):
+                 use_gyro=True, use_imu_orientation=True, node: Node = None, robot_type="wolfgang", 
+                 roll_offset=0.0, pitch_offset=0.0, ang_vel_x_offset=0.0, ang_vel_y_offset=0.0, 
+                 roll_scale=1.0, pitch_scale=1.0, ang_vel_x_scale=1.0, ang_vel_y_scale=1.0, use_previous_state=False):
         super().__init__(simulator_type=simulator_type + "_off", reward_function=reward_function, step_freq=step_freq,
                          ros_debug=True, gui=gui,
                          trajectory_file=trajectory_file, state_type=state_type, ep_length_in_s=ep_length_in_s,
@@ -103,6 +105,10 @@ class ExecuteEnv(WolfgangWalkEnv):
         self.pitch_offset = pitch_offset
         self.ang_vel_x_offset = ang_vel_x_offset
         self.ang_vel_y_offset = ang_vel_y_offset
+        self.roll_scale = roll_scale
+        self.pitch_scale = pitch_scale
+        self.ang_vel_x_scale = ang_vel_x_scale
+        self.ang_vel_y_scale = ang_vel_y_scale
         self.last_state = None
         # needs to be set manually
         self.venv = None
@@ -192,6 +198,14 @@ class ExecuteEnv(WolfgangWalkEnv):
                 self.ang_vel_x_offset = math.radians(param.value)
             elif param.name == "ang_vel_y_offset":
                 self.ang_vel_y_offset = math.radians(param.value)
+            elif param.name == "roll_scale":
+                self.roll_scale = math.radians(param.value)
+            elif param.name == "pitch_scale":
+                self.pitch_scale = math.radians(param.value)
+            elif param.name == "ang_vel_x_scale":
+                self.ang_vel_x_scale = math.radians(param.value)
+            elif param.name == "ang_vel_y_scale":
+                self.ang_vel_y_scale = math.radians(param.value)
         return SetParametersResult(successful=True)
 
     def apply_action(self, action):
@@ -324,8 +338,12 @@ class ExecuteEnv(WolfgangWalkEnv):
     def imu_cb(self, msg: Imu):
         rpy = [*quat2euler((msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z))]
         # add the offset to compensate for unprecicely mounted IMU
-        self.imu_rpy = [rpy[0] + self.roll_offset, rpy[1] + self.pitch_offset, rpy[2]]
-        self.ang_vel = [msg.angular_velocity.x + self.ang_vel_x_offset, msg.angular_velocity.y + self.ang_vel_y_offset, msg.angular_velocity.z]
+        self.imu_rpy = [rpy[0] * self.roll_scale + self.roll_offset, 
+                        rpy[1] * self.pitch_scale + self.pitch_offset, 
+                        rpy[2]]
+        self.ang_vel = [msg.angular_velocity.x * self.ang_vel_x_scale + self.ang_vel_x_offset, 
+                        msg.angular_velocity.y * self.ang_vel_y_scale + self.ang_vel_y_offset, 
+                        msg.angular_velocity.z]
 
     def foot_pressure_cb(self, msg: FootPressure, is_left: bool):
         print("foot_pressure_cb")

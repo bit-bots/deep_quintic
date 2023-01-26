@@ -87,7 +87,7 @@ class BaseState(PhaseState):
             rpy = deepcopy(self.env.robot.imu_rpy)
             if self.randomize and len(rpy) == 3:
                 for i in range(3):
-                    rpy[i] = random.gauss(rpy[i], 0.20)
+                    rpy[i] = random.gauss(rpy[i], 0.10)
             if self.env.rot_type == Rot.RPY:
                 roll = rpy[0]
                 pitch = rpy[1]
@@ -114,7 +114,7 @@ class BaseState(PhaseState):
             ang_vel = deepcopy(self.env.robot.imu_ang_vel)
             if self.randomize:
                 for i in range(3):
-                    ang_vel[i] = random.gauss(ang_vel[i], 2.0)
+                    ang_vel[i] = random.gauss(ang_vel[i], 1.0)
             if scaled:
                 ang_vel = ang_vel / np.array(20)
             output["ang_vel"] = ang_vel

@@ -2,6 +2,12 @@ from gym.envs.registration import register
 
 from deep_quintic.env import WolfgangWalkEnv, CartesianEulerEnv, CartesianFusedEnv, CartesianQuaternionEnv, CartesianSixdEnv, JointEnv, CartesianEulerStateEnv, CartesianEulerNoncyclicEnv
 from deep_quintic.ros_runner import ExecuteEnv
+from deep_quintic.walker2d_bias import Walker2DBulletBiasEnv
+
+register(id='Walker2DBulletBiasEnv-v0',
+         entry_point='deep_quintic:Walker2DBulletBiasEnv',
+         max_episode_steps=1000,
+         reward_threshold=2500.0)
 
 register(
     id='WolfgangWalkEnv-v1',

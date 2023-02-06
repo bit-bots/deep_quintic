@@ -111,7 +111,13 @@ class Walker2DBiased(WalkerBase):
     #print(a)
     assert (np.isfinite(a).all())
     for n, j in enumerate(self.ordered_joints):
-      j.set_position(a[n])
+      #j.set_position(a[n])
+      # use the direct method to set the maximum torque, so that we limit it to the same maximal value we could use with torque control
+      self._p.setJointMotorControl2(j.bodies[j.bodyIndex],
+                                    j.jointIndex,
+                                    pybullet.POSITION_CONTROL,
+                                    targetPosition=a[n],
+                                    force=self.power * j.power_coef)
 
 
   def apply_action_torque(self, a):    

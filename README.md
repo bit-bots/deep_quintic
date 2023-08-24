@@ -33,7 +33,7 @@ Hint: PlotJuggler (https://github.com/facontidavide/PlotJuggler) is helpful vor 
 
 ### Using Different Robot Models
 
-TODO add links to existing webots models
+A collection of existing and tested webots models can be found here: https://github.com/bit-bots/humanoid_robots_ros2/tree/master
 
 If you want to use a different robot model for training in Webots you will need to perform the following steps.
 1. Create URDF and MoveIt configuration as it described [here](https://github.com/bit-bots/humanoid_robots_ros2/blob/master/README.md)
